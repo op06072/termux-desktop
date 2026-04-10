@@ -28,6 +28,9 @@ on:
 env:
     MESA_VERSION: ${{ github.event.inputs.mesa_version || '' }}
 
+permissions:
+    contents: write
+
 jobs:
     validate-inputs:
         runs-on: ubuntu-latest
@@ -65,146 +68,131 @@ jobs:
                   echo "Using Mesa version: $MESA_VERSION"
                   echo "Action type: $ACTION_TYPE"
 
-    process-aarch64:
+    build-ubuntu-arm64:
         needs: validate-inputs
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
+        runs-on: ubuntu-24.04-arm
+        strategy:
+            matrix:
+                arch: [aarch64, arm]
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
 
-            - name: Update repos
-              run: sudo apt update -y
+            - name: Set up QEMU for ARM32
+              if: matrix.arch == 'arm'
+              uses: docker/setup-qemu-action@v3
+              with:
+                  platforms: arm
 
-            - name: Enable source repositories
+            - name: Install dependencies (ARM64 native)
+              if: matrix.arch == 'aarch64'
               run: |
                   sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
-                  sudo apt update -y
-
-            - name: Free additional disk space
-              run: |
-                  sudo apt purge -yq $(
-                    dpkg -l |
-                      grep '^ii' |
-                      awk '{ print $2 }' |
-                      grep -P '(mecab|linux-azure-tools-|aspnetcore|liblldb-|netstandard-|clang-tidy|clang-format|gfortran-|mysql-|google-cloud-cli|postgresql-|cabal-|dotnet-|ghc-|mongodb-|libmono|llvm-16|llvm-17)'
-                  ) || true
-                  sudo apt purge -yq \
-                    snapd kubectl podman ruby3.2-doc mercurial-common git-lfs \
-                    skopeo buildah vim python3-botocore azure-cli powershell \
-                    shellcheck firefox google-chrome-stable microsoft-edge-stable || true
-                  sudo apt autoremove -yq
-                  sudo apt clean
-
-            - name: Install required packages
-              run: |
+                  sudo apt update
+                  sudo apt build-dep -y mesa
                   sudo apt install -y \
-                    clang clang-tools llvm llvm-dev spirv-tools spirv-headers \
-                    libosmesa6-dev mesa-common-dev libgl1-mesa-dev libegl1-mesa-dev \
-                    libvulkan-dev libva-dev libvdpau-dev mesa-utils \
-                    libx11-dev libx11-xcb-dev libxau-dev libxcb1-dev \
-                    libxshmfence-dev libxxf86vm-dev libxt-dev libxmu-dev libxpm-dev \
-                    libmotif-dev libwayland-dev libarchive-dev libelf-dev libexpat1-dev \
-                    libpciaccess-dev libedit-dev libffi-dev libzstd-dev libncurses-dev \
-                    xz-utils valgrind libglvnd-dev \
-                    meson ninja-build patchelf unzip curl python3-pip flex bison \
-                    zip git cmake ccache python3-mako glslang-tools
-                  sudo apt build-dep mesa -y
+                    git ccache \
+                    clang clang-tools llvm llvm-dev \
+                    ninja-build patchelf unzip curl \
+                    python3-pip python3-mako flex bison \
+                    zip cmake glslang-tools
 
-            - name: Build Turnip for aarch64
+                  # Upgrade meson to latest version
+                  sudo apt remove -y meson || true
+                  sudo pip3 install --upgrade meson --break-system-packages
+
+                  # Verify meson version
+                  echo "Installed Meson version:"
+                  meson --version
+
+            - name: Install Docker (for ARM32 QEMU build)
+              if: matrix.arch == 'arm'
+              run: |
+                  # Docker should already be available on ubuntu-24.04-arm runner
+                  docker --version
+
+            - name: Cache ccache (ARM64)
+              if: matrix.arch == 'aarch64'
+              uses: actions/cache@v4
+              with:
+                  path: ~/.ccache
+                  key: ccache-turnip-${{ runner.os }}-${{ runner.arch }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+                  restore-keys: |
+                      ccache-turnip-${{ runner.os }}-${{ runner.arch }}-${{ matrix.arch }}-
+
+            - name: Cache ccache (ARM32)
+              if: matrix.arch == 'arm'
+              uses: actions/cache@v4
+              with:
+                  path: ./.ccache-arm32
+                  key: ccache-turnip-arm32-${{ github.run_id }}-${{ github.run_attempt }}
+                  restore-keys: |
+                      ccache-turnip-arm32-
+
+            - name: Configure ccache (ARM64)
+              if: matrix.arch == 'aarch64'
+              run: |
+                  export CCACHE_DIR=~/.ccache
+                  ccache --max-size=2G
+                  ccache --show-config
+                  ccache --zero-stats
+                  ccache --show-stats
+
+            - name: Build Turnip for ${{ matrix.arch }}
               env:
                   MESA_VERSION: ${{ needs.validate-inputs.outputs.mesa_version }}
+                  CCACHE_DIR: ~/.ccache
               run: |
                   cd .github/scripts
-
                   chmod +x turnip.sh
+                  MESA_VERSION="${MESA_VERSION}" ./turnip.sh ${{ matrix.arch }}
 
-                  MESA_VERSION="${MESA_VERSION}" ./turnip.sh aarch64
+            - name: Show ccache stats (ARM64)
+              if: matrix.arch == 'aarch64'
+              run: |
+                  export CCACHE_DIR=~/.ccache
+                  ccache --show-stats
 
-            - name: Upload aarch64 artifacts
+            - name: Show ccache stats (ARM32)
+              if: matrix.arch == 'arm'
+              run: |
+                  if [ -d ./.ccache-arm32 ]; then
+                    du -sh ./.ccache-arm32
+                  fi
+
+            - name: Save ccache (ARM64)
+              if: matrix.arch == 'aarch64'
+              uses: actions/cache/save@v4
+              with:
+                  path: ~/.ccache
+                  key: ccache-turnip-${{ runner.os }}-${{ runner.arch }}-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+            - name: Save ccache (ARM32)
+              if: matrix.arch == 'arm'
+              uses: actions/cache/save@v4
+              with:
+                  path: ./.ccache-arm32
+                  key: ccache-turnip-arm32-${{ github.run_id }}-${{ github.run_attempt }}
+
+            - name: Upload ${{ matrix.arch }} artifacts
               uses: actions/upload-artifact@v4
               with:
-                  name: turnip-${{ needs.validate-inputs.outputs.mesa_version }}-aarch64
-                  path: .github/scripts/turnip_workdir/turnip-${{ needs.validate-inputs.outputs.mesa_version }}-aarch64.zip
+                  name: turnip-${{ needs.validate-inputs.outputs.mesa_version }}-${{ matrix.arch }}
+                  path: .github/scripts/turnip_workdir/turnip-${{ needs.validate-inputs.outputs.mesa_version }}-${{ matrix.arch }}.zip
                   retention-days: 30
 
             - name: Cleanup build directory
-              run: rm -rf .github/scripts/turnip_workdir
-
-    process-arm:
-        needs: validate-inputs
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v5
-
-            - name: Update repos
-              run: sudo apt update -y
-
-            - name: Enable source repositories
+              if: always()
               run: |
-                  sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
-                  sudo apt update -y
-
-            - name: Free additional disk space
-              run: |
-                  sudo apt purge -yq $(
-                    dpkg -l |
-                      grep '^ii' |
-                      awk '{ print $2 }' |
-                      grep -P '(mecab|linux-azure-tools-|aspnetcore|liblldb-|netstandard-|clang-tidy|clang-format|gfortran-|mysql-|google-cloud-cli|postgresql-|cabal-|dotnet-|ghc-|mongodb-|libmono|llvm-16|llvm-17)'
-                  ) || true
-                  sudo apt purge -yq \
-                    snapd kubectl podman ruby3.2-doc mercurial-common git-lfs \
-                    skopeo buildah vim python3-botocore azure-cli powershell \
-                    shellcheck firefox google-chrome-stable microsoft-edge-stable || true
-                  sudo apt autoremove -yq
-                  sudo apt clean
-
-            - name: Install required packages
-              run: |
-                  sudo apt install -y \
-                    clang clang-tools llvm llvm-dev spirv-tools spirv-headers \
-                    libosmesa6-dev mesa-common-dev libgl1-mesa-dev libegl1-mesa-dev \
-                    libvulkan-dev libva-dev libvdpau-dev mesa-utils \
-                    libx11-dev libx11-xcb-dev libxau-dev libxcb1-dev \
-                    libxshmfence-dev libxxf86vm-dev libxt-dev libxmu-dev libxpm-dev \
-                    libmotif-dev libwayland-dev libarchive-dev libelf-dev libexpat1-dev \
-                    libpciaccess-dev libedit-dev libffi-dev libzstd-dev libncurses-dev \
-                    xz-utils valgrind libglvnd-dev \
-                    meson ninja-build patchelf unzip curl python3-pip flex bison \
-                    zip git cmake ccache python3-mako glslang-tools
-                  sudo apt build-dep mesa -y
-
-            - name: Build Turnip for arm
-              env:
-                  MESA_VERSION: ${{ needs.validate-inputs.outputs.mesa_version }}
-              run: |
-                  cd .github/scripts
-
-                  chmod +x turnip.sh
-
-                  MESA_VERSION="${MESA_VERSION}" ./turnip.sh arm
-
-            - name: Upload arm artifacts
-              uses: actions/upload-artifact@v4
-              with:
-                  name: turnip-${{ needs.validate-inputs.outputs.mesa_version }}-arm
-                  path: .github/scripts/turnip_workdir/turnip-${{ needs.validate-inputs.outputs.mesa_version }}-arm.zip
-                  retention-days: 30
-
-            - name: Cleanup build directory
-              run: rm -rf .github/scripts/turnip_workdir
+                  # Use sudo to remove files created by Docker (owned by root)
+                  if [ -d .github/scripts/turnip_workdir ]; then
+                    sudo rm -rf .github/scripts/turnip_workdir
+                  fi
 
     create-release:
-        needs: [validate-inputs, process-aarch64, process-arm]
+        needs: [validate-inputs, build-ubuntu-arm64]
         if: needs.validate-inputs.outputs.action_type == 'release'
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
+        runs-on: ubuntu-24.04-arm
         steps:
             - name: Checkout repository
               uses: actions/checkout@v5
@@ -213,6 +201,29 @@ jobs:
               uses: actions/download-artifact@v4
               with:
                   path: ./artifacts
+
+            - name: Build release notes with checksums
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  MESA_VERSION="${{ needs.validate-inputs.outputs.mesa_version }}"
+
+                  echo "## Turnip Mesa ${MESA_VERSION} - Android Vulkan Drivers" > release_body.md
+                  echo "" >> release_body.md
+                  echo "Built for Android ARM64 and ARM32 architectures" >> release_body.md
+                  echo "" >> release_body.md
+                  echo "### Checksums" >> release_body.md
+                  echo '```plaintext' >> release_body.md
+
+                  find ./artifacts -name "*.zip" -type f -exec sha256sum {} \; | \
+                    awk '{print $1 "  " $2}' | \
+                    sed 's|./artifacts/[^/]*/||' | \
+                    sort -k2,2 >> release_body.md
+
+                  echo '```' >> release_body.md
+
+                  cat release_body.md
 
             - name: Validate artifacts exist
               run: |
@@ -244,10 +255,7 @@ jobs:
 
             - name: Update Mesa version in enable-hw-acceleration file
               run: |
-                  # Update the TURNIP_MESA_VERSION in the enable-hw-acceleration file
                   sed -i 's/TURNIP_MESA_VERSION="[^"]*"/TURNIP_MESA_VERSION="${{ needs.validate-inputs.outputs.mesa_version }}"/g' enable-hw-acceleration
-
-                  # Show the change for verification
                   echo "Updated TURNIP_MESA_VERSION to: ${{ needs.validate-inputs.outputs.mesa_version }}"
                   grep "TURNIP_MESA_VERSION" enable-hw-acceleration
 
@@ -264,9 +272,7 @@ jobs:
               with:
                   tag_name: turnip-${{ needs.validate-inputs.outputs.mesa_version }}
                   name: Turnip ${{ needs.validate-inputs.outputs.mesa_version }}
-                  body: |
-                      Turnip Mesa ${{ needs.validate-inputs.outputs.mesa_version }} drivers built for Android
-
+                  body_path: release_body.md
                   draft: false
                   prerelease: false
                   make_latest: true

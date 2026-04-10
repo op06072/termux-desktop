@@ -7,8 +7,6 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 WORKDIR="$(pwd)/turnip_workdir"
-NDKVER="android-ndk-r28c"
-SDKVER="26"
 
 log_info() {
 	echo -e "${BLUE}[INFO]${NC} $1"
@@ -42,25 +40,21 @@ MESA_ARCHIVE_URL="https://archive.mesa3d.org/mesa-${MESA_VERSION}.tar.xz"
 
 BUILD_ARCHITECTURES=()
 
-declare -A ARCH_CONFIG
-ARCH_CONFIG[aarch64]="aarch64-linux-android${SDKVER}-clang llvm-strip aarch64-linux-gnu armv8"
-ARCH_CONFIG[arm]="armv7a-linux-androideabi${SDKVER}-clang llvm-strip arm-linux-gnueabihf armv7"
-
 show_usage() {
 	echo "Usage: MESA_VERSION=x.x.x $0 [architecture]"
 	echo ""
 	echo "Arguments:"
-	echo "  aarch64    Build only for ARM64 (64-bit)"
-	echo "  arm        Build only for ARM (32-bit)"
-	echo "  <none>     Build for both architectures (default: aarch64 first, then arm)"
+	echo "  aarch64    Build only for ARM64 (64-bit) - native build"
+	echo "  arm        Build only for ARM (32-bit) - uses QEMU emulation"
+	echo "  <none>     Build for aarch64 only (default)"
 	echo ""
 	echo "Environment Variables:"
 	echo "  MESA_VERSION    Mesa version to build (REQUIRED - no default)"
 	echo ""
 	echo "Examples:"
-	echo "  MESA_VERSION=25.1.5 $0              # Build for both architectures"
-	echo "  MESA_VERSION=25.1.5 $0 aarch64      # Build only for ARM64"
-	echo "  MESA_VERSION=25.2.0 $0 arm          # Build only for ARM 32-bit"
+	echo "  MESA_VERSION=25.1.5 $0              # Build for aarch64"
+	echo "  MESA_VERSION=25.1.5 $0 aarch64      # Build for ARM64"
+	echo "  MESA_VERSION=25.1.5 $0 arm          # Build for ARM32 (QEMU)"
 	echo ""
 	echo "Patches:"
 	echo "  The script will automatically apply patches from the 'patches' directory"
@@ -73,18 +67,18 @@ parse_arguments() {
 	log_info "Using Mesa version: $MESA_VERSION"
 
 	if [ $# -eq 0 ]; then
-		# No arguments - build both architectures
-		BUILD_ARCHITECTURES=(aarch64 arm)
-		log_info "No architecture specified - building for both: aarch64, arm"
+		# No arguments - build for aarch64 only
+		BUILD_ARCHITECTURES=(aarch64)
+		log_info "No architecture specified - building for aarch64"
 	elif [ $# -eq 1 ]; then
 		case "$1" in
 		aarch64)
 			BUILD_ARCHITECTURES=(aarch64)
-			log_info "Building for ARM64 (aarch64) only"
+			log_info "Building for ARM64 (aarch64) - native build"
 			;;
 		arm)
 			BUILD_ARCHITECTURES=(arm)
-			log_info "Building for ARM (32-bit) only"
+			log_info "Building for ARM32 - using QEMU emulation"
 			;;
 		--help | -h)
 			show_usage
@@ -99,32 +93,6 @@ parse_arguments() {
 		log_error "Too many arguments"
 		show_usage
 	fi
-}
-
-setup_ndk() {
-	log_info "Setting up Android NDK..."
-
-	if [ -n "${ANDROID_NDK_LATEST_HOME}" ]; then
-		log_info "Using Android NDK from environment: $ANDROID_NDK_LATEST_HOME"
-		export NDK_PATH="$ANDROID_NDK_LATEST_HOME"
-		return
-	fi
-
-	if [ ! -d "$WORKDIR/$NDKVER" ]; then
-		log_info "Downloading Android NDK $NDKVER (~1GB)..."
-		curl -L "https://dl.google.com/android/repository/${NDKVER}-linux.zip" \
-			--output "$WORKDIR/${NDKVER}-linux.zip" \
-			--progress-bar
-
-		log_info "Extracting Android NDK..."
-		cd "$WORKDIR"
-		unzip -q "${NDKVER}-linux.zip"
-		rm "${NDKVER}-linux.zip"
-	else
-		log_info "Using existing Android NDK"
-	fi
-
-	export NDK_PATH="$WORKDIR/$NDKVER"
 }
 
 prepare_mesa() {
@@ -196,7 +164,6 @@ apply_patches() {
 		patch_name=$(basename "$patch_file")
 		log_info "Applying patch: $patch_name"
 
-		# Apply patch with git apply for better compatibility
 		if git apply --check "$patch_file" >/dev/null 2>&1; then
 			if git apply "$patch_file"; then
 				log_success "Successfully applied patch: $patch_name"
@@ -206,7 +173,6 @@ apply_patches() {
 				exit 1
 			fi
 		else
-			# Fallback to regular patch command if git apply fails
 			log_warning "Git apply check failed for $patch_name, trying patch command"
 			if patch -p1 --dry-run <"$patch_file" >/dev/null 2>&1; then
 				if patch -p1 <"$patch_file"; then
@@ -228,195 +194,230 @@ apply_patches() {
 	log_success "All patches applied successfully"
 }
 
-create_cross_files() {
-	local arch="$1"
-	local config_string="${ARCH_CONFIG[$arch]}"
-	read -ra config <<<"$config_string"
-	local clang="${config[0]}"
-	local strip_tool="${config[1]}"
-	local lib_arch="${config[2]}"
-	local cpu="${config[3]}"
-
-	local ndk_bin="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
-	cd "$WORKDIR/mesa"
-
-	log_info "Creating Meson cross file for $arch..."
-
-	cat <<-EOF >"android-${arch}.txt"
-		[binaries]
-		ar = '$ndk_bin/llvm-ar'
-		c = ['ccache', '$ndk_bin/$clang', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
-		cpp = ['ccache', '$ndk_bin/${clang/clang/clang++}', '--start-no-unused-arguments', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++', '--end-no-unused-arguments', '-Wno-error=c++11-narrowing', '-Wno-deprecated-declarations', '-Wno-gnu-alignof-expression']
-		c_ld = '$ndk_bin/ld.lld'
-		cpp_ld = '$ndk_bin/ld.lld'
-		strip = '$ndk_bin/$strip_tool'
-		pkg-config = ['env', 'PKG_CONFIG_LIBDIR=$ndk_bin/pkg-config', '/usr/bin/pkg-config']
-		[host_machine]
-		system = 'android'
-		cpu_family = '$arch'
-		cpu = '$cpu'
-		endian = 'little'
-	EOF
-
-	# Create native file
-	cat <<-EOF >"native.txt"
-		[build_machine]
-		c = ['ccache', 'clang']
-		cpp = ['ccache', 'clang++']
-		ar = 'llvm-ar'
-		strip = 'llvm-strip'
-		c_ld = 'ld.lld'
-		cpp_ld = 'ld.lld'
-		system = 'linux'
-		cpu_family = 'x86_64'
-		cpu = 'x86_64'
-		endian = 'little'
-	EOF
-}
-
 build_for_architecture() {
 	local arch="$1"
-	local config_string="${ARCH_CONFIG[$arch]}"
-	read -ra config <<<"$config_string"
-	local lib_arch="${config[2]}"
 
-	log_info "Building Turnip for $arch architecture..."
+	if [ "$arch" = "arm" ]; then
+		build_arm32
+	else
+		build_aarch64
+	fi
+}
+
+build_aarch64() {
+	log_info "Building Turnip for aarch64 (native)..."
 
 	cd "$WORKDIR/mesa"
 
-	create_cross_files "$arch"
-
-	local build_dir="build-android-$arch"
+	local build_dir="build-aarch64"
 
 	if [ -d "$build_dir" ]; then
 		log_info "Cleaning existing build directory..."
 		rm -rf "$build_dir"
 	fi
 
-	log_info "Generating build files..."
+	log_info "Configuring Mesa with meson..."
 
-	cross_file_name="android-${arch}.txt"
-
-	if [[ "$arch" == "aarch64" ]]; then
-		CC=clang CXX=clang++ meson setup "$build_dir" \
-			--cross-file "$WORKDIR/mesa/$cross_file_name" \
-			--native-file "$WORKDIR/mesa/native.txt" \
-			--cmake-prefix-path /usr \
-			--libdir lib/aarch64-linux-gnu/ \
-			-Dbuildtype=release \
-			-Dplatforms=android \
-			-Dplatform-sdk-version="$SDKVER" \
-			-Dandroid-stub=true \
-			-Dgallium-drivers=zink \
-			-Dvulkan-drivers=freedreno \
-			-Dallow-fallback-for=libdrm,perfetto \
-			-Dfreedreno-kmds=kgsl \
-			-Db_lto=true \
-			-Db_lto_mode=thin \
-			-Degl=disabled \
-			-Dstrip=true
-	elif [[ "$arch" == "arm" ]]; then
-		CC=clang CXX=clang++ meson setup "$build_dir" \
-			--cross-file "$WORKDIR/mesa/$cross_file_name" \
-			--native-file "$WORKDIR/mesa/native.txt" \
-			--cmake-prefix-path /usr \
-			--libdir /usr/lib/arm-linux-gnueabihf \
-			-Dbuildtype=release \
-			-Dplatforms=android \
-			-Dplatform-sdk-version="$SDKVER" \
-			-Dandroid-stub=true \
-			-Dgallium-drivers=zink \
-			-Dvulkan-drivers=freedreno \
-			-Dallow-fallback-for=libdrm,perfetto \
-			-Dfreedreno-kmds=kgsl \
-			-Db_lto=true \
-			-Db_lto_mode=thin \
-			-Degl=disabled \
-			-Dstrip=true
+	# Setup ccache
+	if [ -n "${CCACHE_DIR}" ]; then
+		export CCACHE_DIR
+		log_info "Using ccache directory: $CCACHE_DIR"
 	fi
 
-	log_info "Compiling build files..."
+	# Use LLVM 20 if available, otherwise use system default
+	local llvm_config=""
+	if [ -f "/usr/lib/llvm-20/bin/llvm-config" ]; then
+		llvm_config="/usr/lib/llvm-20/bin/llvm-config"
+		export LLVM_CONFIG="$llvm_config"
+		log_info "Using LLVM 20: $llvm_config"
+	fi
+
+	# Minimal Turnip-only configuration
+	CC="ccache gcc" CXX="ccache g++" meson setup "$build_dir" \
+		--prefix=/usr \
+		-Dplatforms=x11,wayland \
+		-Dgallium-drivers= \
+		-Dgallium-va=disabled \
+		-Dgallium-mediafoundation=disabled \
+		-Dvulkan-drivers=freedreno \
+		-Dvulkan-layers= \
+		-Dgles1=disabled \
+		-Dgles2=disabled \
+		-Dopengl=false \
+		-Dgbm=disabled \
+		-Dglx=disabled \
+		-Dxlib-lease=disabled \
+		-Dfreedreno-kmds=kgsl \
+		-Degl=disabled \
+		-Dglvnd=disabled \
+		-Dintel-rt=disabled \
+		-Dmicrosoft-clc=disabled \
+		-Dllvm=disabled \
+		-Dvalgrind=disabled \
+		-Dbuild-tests=false \
+		-Dlibunwind=disabled \
+		-Dlmsensors=disabled \
+		-Dandroid-libbacktrace=disabled \
+		-Dbuildtype=release
+
+	log_info "Building Mesa..."
 	ninja -C "$build_dir" -j "$(nproc)"
 
-	local lib_src="$build_dir/src/freedreno/vulkan/libvulkan_freedreno.so"
-	if [ ! -f "$lib_src" ]; then
-		log_error "Build failed for $arch - library not found"
-		return 1
-	fi
-
-	log_success "Build completed for $arch"
+	log_success "Build completed for aarch64"
 }
 
-create_icd_file() {
-	local arch="$1"
-	local package_dir="$2"
-	local config_string="${ARCH_CONFIG[$arch]}"
-	read -ra config <<<"$config_string"
-	local lib_arch="${config[2]}"
+build_arm32() {
+	log_info "Building Turnip for ARM32 using QEMU..."
 
-	local icd_file="$package_dir/share/vulkan/icd.d/freedreno_icd.${arch}.json"
+	cd "$WORKDIR"
 
-	mkdir -p "$(dirname "$icd_file")"
+	# Setup ccache directory for ARM32
+	local ccache_dir="$SCRIPT_DIR/../.ccache-arm32"
+	mkdir -p "$ccache_dir"
 
-	cat >"$icd_file" <<-EOF
-		{
-		    "ICD": {
-		        "api_version": "1.4.318",
-		        "library_arch": "64",
-		        "library_path": "/usr/lib/${lib_arch}/libvulkan_freedreno.so"
-		    },
-		    "file_format_version": "1.0.1"
-		}
-	EOF
+	log_info "Creating ARM32 build container..."
 
-	log_info "Created ICD file for $arch at: $icd_file"
+	# Create Dockerfile for ARM32 build
+	cat >Dockerfile.arm32 <<'EOF'
+FROM arm32v7/ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources && \
+    apt-get update && \
+    apt-get build-dep -y mesa && \
+    apt-get install -y \
+        git ccache \
+        clang llvm \
+        ninja-build patchelf unzip curl \
+        python3-pip python3-mako flex bison \
+        zip cmake glslang-tools && \
+    apt-get remove -y meson || true && \
+    pip3 install --upgrade meson --break-system-packages && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+EOF
+
+	log_info "Building Docker image for ARM32..."
+	docker build -f Dockerfile.arm32 -t mesa-arm32-builder:latest .
+
+	log_info "Running ARM32 build in Docker container..."
+	docker run --rm \
+		--platform linux/arm/v7 \
+		-v "$WORKDIR/mesa:/build/mesa" \
+		-v "$ccache_dir:/root/.ccache" \
+		-e CCACHE_DIR=/root/.ccache \
+		mesa-arm32-builder:latest \
+		bash -c "
+			set -e
+			cd /build/mesa
+
+			# Configure ccache
+			ccache --max-size=2G
+			ccache --zero-stats
+
+			# Configure Mesa
+			CC='ccache gcc' CXX='ccache g++' meson setup build-arm \
+				--prefix=/usr \
+				-Dplatforms=x11,wayland \
+				-Dgallium-drivers= \
+				-Dgallium-va=disabled \
+				-Dgallium-mediafoundation=disabled \
+				-Dvulkan-drivers=freedreno \
+				-Dvulkan-layers= \
+				-Dgles1=disabled \
+				-Dgles2=disabled \
+				-Dopengl=false \
+				-Dgbm=disabled \
+				-Dglx=disabled \
+				-Dxlib-lease=disabled \
+				-Dfreedreno-kmds=kgsl \
+				-Degl=disabled \
+				-Dglvnd=disabled \
+				-Dintel-rt=disabled \
+				-Dmicrosoft-clc=disabled \
+				-Dllvm=disabled \
+				-Dvalgrind=disabled \
+				-Dbuild-tests=false \
+				-Dlibunwind=disabled \
+				-Dlmsensors=disabled \
+				-Dandroid-libbacktrace=disabled \
+				-Dbuildtype=release
+
+			# Build
+			ninja -C build-arm -j \$(nproc)
+
+			# Install to temporary directory (do this inside Docker)
+			DESTDIR=/build/mesa/install-arm meson install -C build-arm
+
+			# Show ccache stats
+			ccache --show-stats
+
+			# Fix permissions so host can access files
+			chmod -R 777 /build/mesa/install-arm
+		"
+
+	if [ $? -eq 0 ]; then
+		log_success "ARM32 build completed successfully"
+	else
+		log_error "ARM32 build failed"
+		exit 1
+	fi
+
+	# Cleanup
+	rm -f Dockerfile.arm32
 }
 
 package_architecture() {
 	local arch="$1"
-	local config_string="${ARCH_CONFIG[$arch]}"
-	read -ra config <<<"$config_string"
-	local lib_arch="${config[2]}"
 
-	log_info "Packaging libraries for $arch..."
+	log_info "Packaging Turnip for $arch..."
 
-	local arch_package_dir="$WORKDIR/turnip_package_${arch}"
-	mkdir -p "$arch_package_dir"
-	rm -rf "${arch_package_dir:?}"/*
+	local package_dir="$WORKDIR/turnip_package_${arch}"
+	mkdir -p "$package_dir"
+	rm -rf "${package_dir:?}"/*
 
-	local lib_dir="$arch_package_dir/lib/$lib_arch"
-	mkdir -p "$lib_dir"
+	cd "$WORKDIR/mesa"
 
-	local lib_src="$WORKDIR/mesa/build-android-$arch/src/freedreno/vulkan/libvulkan_freedreno.so"
-
-	if [ -f "$lib_src" ]; then
-		patchelf --set-soname vulkan.adreno.so "$lib_src"
-		cp "$lib_src" "$lib_dir/"
-		log_success "Packaged library for $arch"
-		create_icd_file "$arch" "$arch_package_dir"
-		return 0
+	# For ARM32, files are already installed by Docker, just copy them
+	if [ "$arch" = "arm" ]; then
+		log_info "Copying ARM32 installation from Docker build..."
+		if [ -d "$WORKDIR/mesa/install-arm" ]; then
+			cp -r "$WORKDIR/mesa/install-arm"/* "$package_dir/"
+			log_success "Packaged Mesa installation for $arch"
+		else
+			log_error "ARM32 installation directory not found"
+			return 1
+		fi
 	else
-		log_error "Library not found for $arch"
-		return 1
+		# For aarch64, use meson install as before
+		log_info "Installing Mesa to temporary directory..."
+		DESTDIR="$package_dir" meson install -C "build-aarch64"
+		log_success "Packaged Mesa installation for $arch"
 	fi
 }
 
 create_package() {
 	local arch="$1"
 
-	log_info "Creating package for $arch..."
+	log_info "Creating zip package for $arch..."
 
 	local package_name="turnip-${MESA_VERSION}-${arch}"
-	local arch_package_dir="$WORKDIR/turnip_package_${arch}"
+	local package_dir="$WORKDIR/turnip_package_${arch}"
 
-	cd "$arch_package_dir"
-	zip -r "$WORKDIR/${package_name}.zip" lib/ share/
+	cd "$package_dir"
+
+	# Create zip from the installed files
+	zip -r "$WORKDIR/${package_name}.zip" .
 
 	if [ -f "$WORKDIR/${package_name}.zip" ]; then
 		log_success "Package created: $WORKDIR/${package_name}.zip"
-		log_info "Package contents for $arch:"
-		unzip -l "$WORKDIR/${package_name}.zip"
+		log_info "Package size: $(du -h "$WORKDIR/${package_name}.zip" | cut -f1)"
+		log_info "Package contents:"
+		unzip -l "$WORKDIR/${package_name}.zip" | head -20
 		echo ""
 	else
 		log_error "Package creation failed for $arch"
@@ -427,12 +428,12 @@ create_package() {
 main() {
 	parse_arguments "$@"
 
-	log_info "Starting Turnip builder for architectures: ${BUILD_ARCHITECTURES[*]} (Mesa $MESA_VERSION with NDK r28c)"
+	log_info "Starting Turnip builder for architectures: ${BUILD_ARCHITECTURES[*]} (Mesa $MESA_VERSION)"
+	log_info "Build mode: Native for ARM64, QEMU for ARM32"
 
 	mkdir -p "$WORKDIR"
 	cd "$WORKDIR"
 
-	setup_ndk
 	prepare_mesa
 	apply_patches
 
