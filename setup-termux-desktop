@@ -4732,11 +4732,14 @@ function terminal_utility_setup() {
 		check_and_backup "$TERMUX_PREFIX/etc/motd-playstore"
 		check_and_backup "$TERMUX_PREFIX/etc/motd.sh"
 		download_file "$TERMUX_PREFIX/etc/motd.sh" "$REPO_RAW_URL/refs/heads/$REPO_BRANCH_MAIN/other/motd.sh"
-		if grep -q "motd.sh$" "$TERMUX_PREFIX/etc/termux-login.sh"; then
-			sed -i "s|.*motd\.sh$|bash $TERMUX_PREFIX/etc/motd.sh|" "$TERMUX_PREFIX/etc/termux-login.sh"
-		else
-			echo "bash $TERMUX_PREFIX/etc/motd.sh" >>"$TERMUX_PREFIX/etc/termux-login.sh"
+		if grep -q "motd.sh" "$TERMUX_PREFIX/etc/termux-login.sh"; then
+			sed -i '/motd\.sh/d' "$TERMUX_PREFIX/etc/termux-login.sh"
 		fi
+		cat >>"$TERMUX_PREFIX/etc/termux-login.sh" <<-EOF
+			if [ -t 0 ]; then
+				bash $TERMUX_PREFIX/etc/motd.sh
+			fi
+		EOF
 		check_and_create_directory "$TERMUX_HOME/.termux"
 		check_and_backup "$TERMUX_HOME/.termux/colors.properties $TERMUX_HOME/.termux/termux.properties $TERMUX_HOME/.aliases $TERMUX_HOME/.nanorc"
 
