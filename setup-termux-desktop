@@ -1592,6 +1592,11 @@ function setup_device_gpu_model() {
 			banner
 			print_warn "Unable to auto detect GPU"
 			print_msg "${BOLD}Please Select Your Device GPU"
+			echo
+			print_msg "If you don't know what your GPU is then look at this section:${NC}
+• https://github.com/sabamdarif/termux-desktop/edit/main/docs/hw-acceleration.md#if-you-dont-know-what-gpu-you-have--then-follow-this-\n
+"
+			echo
 			echo "${Y}1. Adreno${NC}"
 			echo
 			echo "${Y}2. Mali${NC}"
@@ -1675,6 +1680,13 @@ function exp_vulkan_support() {
 	print_msg "${B}This:- https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/$REPO_BRANCH_MAIN/docs/hw-acceleration.md"
 	print_msg "${BOLD}Select the vulkan driver"
 	if [[ "${termux_arch}" == "aarch64" ]]; then
+		print_msg "For most of the device No.1 vulkan-wrapper-android will work:${NC}
+• No.1 vulkan-wrapper-android: Works for most devices\n
+• No.3 pipetto-crypto's fork: Better choice if you have Mali and No.1 didn't work well\n
+• No.4 freedreno: Better choice for Adreno devices\n
+• No.6 mesa-vulkan-icd-freedreno (Kgsl): Gives freedreno access to OpenGL but it's experimental and unmaintained\n
+"
+		echo
 		echo "${Y}1. vulkan-wrapper-android${NC}"
 		echo
 		echo "${Y}2. vulkan-wrapper-android (leegao's fork)${NC}"
@@ -1703,6 +1715,12 @@ function exp_vulkan_support() {
 		7) exp_termux_vulkan_hw_answer="skip" ;;
 		esac
 	else
+		print_msg "For most of the device No.1 vulkan-wrapper-android will work:${NC}
+• No.1 vulkan-wrapper-android: Works for most devices\n
+• No.2 freedreno: Better choice for Adreno devices\n
+• No.4 mesa-vulkan-icd-freedreno (Kgsl): Gives freedreno access to OpenGL but it's experimental and unmaintained\n
+"
+		echo
 		echo "${Y}1. vulkan-wrapper-android${NC}"
 		echo
 		echo "${Y}2. mesa-vulkan-icd-freedreno (Turnip) (adreno only)${NC}"
@@ -1812,6 +1830,13 @@ function hw_questions() {
 # distro related questions
 function distro_type_select() {
 	print_msg "${BOLD}Select the distro type"
+	echo " "
+	print_msg "Installation Method:${NC}
+• chroot-distro: Requires root and you first need to flash the sabamdarif/chroot-distro module\n
+• proot-distro: Doesn't require root and no additional setup needed\n
+• To know more look at the following links\n
+"
+	echo " "
 	echo "${G}chroot-distro:- ${B}https://github.com/sabamdarif/chroot-distro${NC}"
 	echo " "
 	echo "${G}proot-distro:- ${B}https://github.com/termux/proot-distro${NC}"
@@ -1837,7 +1862,7 @@ function choose_distro() {
 	echo " "
 	echo "${Y}2. Ubuntu${NC}"
 	echo " "
-	echo "${Y}3. Arch (Unstable | isn't fully suppoted by AppStore yet)${NC}"
+	echo "${Y}3. Arch (Unstable | isn't fully suppoted by My AppStore)${NC}"
 	echo " "
 	echo "${Y}4. Fedora${NC}"
 	echo " "
@@ -2290,7 +2315,7 @@ function questions_install_type() {
 	print_msg "A Quick Overview"
 	sleep 0.2
 
-	print_msg "${R}[${C}-${R}]${G} Key Terms:${NC}
+	print_msg "Key Terms:${NC}
 • Generic: Pre-configured options that so far work best in most of the devices\n
 • Recommended: Tested configurations with minimal known issues\n
 • Hardware Acceleration: Uses your device's GPU for better graphics render\n

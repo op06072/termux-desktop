@@ -5,23 +5,36 @@
 
 ### When setting up hardware acceleration in Termux, follow these steps for optimal configuration:
 
-### Installation
+#### Select your device GPU
 
-- Run the Installer Script and choose your preferred hardware acceleration method during the installation.
-- If you opt for a distro container, select the hardware acceleration method for the distro as well.
-    > For Adreno GPU, you don't need to choose; it will automatically use turnip if you use ubuntu/debian
-- Once selected, everything will be configured automatically.
+- During the Installation the script will first try to auto detect your gpu and if it failed then it will ask you to chose your device gpu
 
 > [!TIP]
-> Use [CPU-Z](https://play.google.com/store/apps/details?id=com.cpuid.cpu_z&pcampaignid=web_share) to identify your GPU. Research your GPU online to determine whether `virpipe` or `zink` or `icd-wrapper`... works best; Reddit or similar forums often have useful insights.  
-> Although for most GPUs, icd-wrapper (vulkan) should work just fine
+>
+> ##### If you don't know what gpu you have , then follow this:-
+>
+> Use [CPU-Z](https://play.google.com/store/apps/details?id=com.cpuid.cpu_z&pcampaignid=web_share) to identify your GPU.
 
-![CPU-Z Screenshot](https://raw.githubusercontent.com/sabamdarif/termux-desktop/setup-files/images/cpu-z.png)
+- Like in my case i can see i have a Mali GPU
+  ![CPU-Z Screenshot](https://raw.githubusercontent.com/sabamdarif/termux-desktop/setup-files/images/cpu-z.png)
+
+#### Select Driver
+
+- In this next step you need to chose which driver you want to use.
+- In the First step you need to chose the driver You want to use for Vulkan
+    > Vulkan is the modern and the best Api for Linux but compared to OpenGL it's new so not apps still support Vulkan
+    > But using something like Zink you can get OpenGL to work on your device but it is depend no your device
+- For most of the device No.1 vulkan-wrapper-android will work
+- But if you have Mali and no.1 didn't work well for you then try No.3 the pipetto-crypto's fork
+- And for Adreno devices NO.4 freedreno is better Chose Also if you want freedreno to also Give you access to OpenGL then try 6.mesa-vulkan-icd-freedreno (Kgsl) But it's experimental and unmaintained
+- If you opt for a distro container, select the hardware acceleration method for the distro as well.
+    > For Adreno GPU, you don't need to choose; it will automatically use turnip
+- Once selected, everything will be configured automatically.
 
 ### Using Hardware Acceleration in Termux
 
 - Start Termux Desktop via Termux:X11 (recommended) or VNC (In VNC, some drivers might not work)
-- And it should just work if the selected hardware acceleration driver supports your GPU.
+- And it should just work if the selected driver supports your GPU.
 
 ### Using Hardware Acceleration in Proot Distro (Distro Container)
 
@@ -29,22 +42,21 @@
 
 > Remember, you should always run pdrun from Termux's shell; never run it from inside a proot-distro.
 
-1. Launch Termux Desktop.
-2. Run programs in Termux terminal:
+1.  Launch Termux Desktop.
+2.  Run programs in Termux terminal:
 
-    ```bash
-    pdrun program
-    ```
+        ```bash
+        pdrun program
+        ```
 
-    - By default pdrun runs programs with GPU acceleration.
+        - By default pdrun runs programs with GPU acceleration.
+        - To run program without GPU acceleration, Use:-
 
-    ```bash
-    pdrun --nogpu program
-    ```
+        ```bash
+        pdrun --nogpu program
+        ```
 
-    - To run program without GPU acceleration.
-
-![GLMark2 Results](https://raw.githubusercontent.com/sabamdarif/termux-desktop/setup-files/images/pdrun-glmark2.png)
+    ![GLMark2 Results](https://raw.githubusercontent.com/sabamdarif/termux-desktop/setup-files/images/pdrun-glmark2.png)
 
 ### Method 2: Termux Menu
 
