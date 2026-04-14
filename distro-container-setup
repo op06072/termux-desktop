@@ -52,6 +52,7 @@ function setup_proot_distro() {
 	package_install_and_check "proot-distro"
 	banner
 	print_msg "${BOLD}Setting up Selected Linux Distro: ${C}${selected_distro}"
+	echo
 	print_to_config "selected_distro"
 	pd install "$selected_distro"
 }
@@ -509,6 +510,7 @@ function create_shell_script() {
 #################
 function update_distro_repo() {
 	print_msg "${BOLD}Updating $selected_distro And Installing Required Packages"
+	echo
 	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
 		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt update
 		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt upgrade -y -o Dpkg::Options::="--force-confnew"
@@ -543,6 +545,7 @@ function set_distro_time_zone() {
 function distro_fix_sound_issue() {
 	banner
 	print_msg "${BOLD}Fixing ${selected_distro_type} distro Sound Problem..."
+	echo
 	audio_related_packs="pulseaudio"
 	install_audio_related_packs=$(
 		cat <<-EOF
@@ -642,6 +645,7 @@ function distro_zsh_setup() {
 		create_shell_script "$distro_path/root/pd_zsh_install.sh" "$zsh_setup_content"
 		banner
 		print_msg "${BOLD}Setting up shell for ${selected_distro}..."
+		echo
 		"${selected_distro_type}"-distro login "$selected_distro" -- /bin/bash -c 'bash /root/pd_zsh_install.sh'
 	fi
 }
@@ -670,6 +674,7 @@ function distro_terminal_utility_setup() {
 		create_shell_script "$save_path/pd_setup.sh" "$terminal_utility_content"
 		banner
 		print_msg "Configuring Terminal Utility For ${selected_distro}..."
+		echo
 		"${selected_distro_type}"-distro login --user "$final_user_name" "$selected_distro" -- /bin/bash -c 'bash /root/pd_setup.sh'
 	fi
 }
@@ -2299,6 +2304,7 @@ function chroot_disro_container_install_check() {
 		retry_count=0
 		while [[ "$retry_count" -lt "$max_retries" ]]; do
 			print_failed "Some problem occurred in $selected_distro setup"
+			echo
 			print_msg "Trying again... (Attempt $((retry_count + 1)) of $max_retries)"
 			install_distro_container
 			if [[ -f "$TERMUX_PREFIX/bin/$selected_distro" ]] && su -c "ls /data/local/chroot-distro/installed-rootfs/$selected_distro" &>/dev/null; then
@@ -2324,6 +2330,7 @@ function proot_disro_container_install_check() {
 		retry_count=0
 		while [[ "$retry_count" -lt "$max_retries" ]]; do
 			print_failed "Some problem occurred in $selected_distro setup"
+			echo
 			print_msg "Trying again... (Attempt $((retry_count + 1)) of $max_retries)"
 			install_distro_container
 			if [[ -f "$TERMUX_PREFIX/bin/$selected_distro" ]] && [[ -d "$TERMUX_PREFIX/var/lib/proot-distro/installed-rootfs/$selected_distro" ]]; then

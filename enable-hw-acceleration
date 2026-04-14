@@ -270,6 +270,7 @@ function setup_hw_environment_variables() {
 	#     ;;
 	*)
 		print_msg "Uses The Previous Selection For Distro"
+		echo
 		;;
 	esac
 
@@ -313,6 +314,7 @@ function setup_gpu_specific_environment_variables() {
 function setup_turnip_proot() {
 	banner
 	print_msg "${BOLD}Installing required packages for turnip..."
+	echo
 	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
 		turnip_related_packs="xdg-desktop-portal libgl1 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers libvulkan1"
 	elif [[ "$selected_distro" == "fedora" ]]; then
