@@ -5439,9 +5439,17 @@ function change_hw() {
 		old_hw_option="${termux_hw_answer}"
 		if [[ "$enable_hw_acc" == "y" ]]; then
 			banner
-			print_msg "Your current hardware acceleration api for Termux is: ${C}${BOLD}${termux_hw_answer}"
+			if [[ -n "$termux_hw_answer" ]]; then
+				print_msg "Your current hardware acceleration api for Termux is: ${C}${BOLD}${termux_hw_answer}"
+			else
+				print_warn "termux_hw_answer is missing"
+			fi
 			if [[ "$distro_add_answer" == "y" ]]; then
-				print_msg "Your current hardware acceleration api for $selected_distro is: ${C}${BOLD}${pd_hw_answer}"
+				if [[ -n "$pd_hw_answer" ]]; then
+					print_msg "Your current hardware acceleration api for $selected_distro is: ${C}${BOLD}${pd_hw_answer}"
+				else
+					print_warn "pd_hw_answer is missing"
+				fi
 			fi
 			confirmation_y_or_n "Do you want to change hardware acceleration api" confirmation_change_hardware_acceleration
 			# shellcheck disable=SC2154
