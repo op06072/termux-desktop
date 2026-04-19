@@ -4744,10 +4744,8 @@ function terminal_utility_setup() {
 		check_and_backup "$TERMUX_PREFIX/etc/motd-playstore"
 		check_and_backup "$TERMUX_PREFIX/etc/motd.sh"
 		download_file "$TERMUX_PREFIX/etc/motd.sh" "$REPO_RAW_URL/refs/heads/$REPO_BRANCH_MAIN/other/motd.sh"
-		if grep -q "motd.sh" "$TERMUX_PREFIX/etc/termux-login.sh"; then
-			sed -i '/motd\.sh/d' "$TERMUX_PREFIX/etc/termux-login.sh"
-		fi
-		cat >>"$TERMUX_PREFIX/etc/termux-login.sh" <<-EOF
+		check_and_backup "$TERMUX_PREFIX/etc/termux-login.sh"
+		cat >"$TERMUX_PREFIX/etc/termux-login.sh" <<-EOF
 			if [ -t 0 ]; then
 				bash $TERMUX_PREFIX/etc/motd.sh
 			fi
@@ -5235,9 +5233,7 @@ function remove_termux_desktop() {
 				check_and_restore "$TERMUX_PREFIX/etc/motd-playstore"
 				check_and_restore "$TERMUX_PREFIX/etc/motd.sh"
 				check_and_restore "$TERMUX_HOME/.termux/colors.properties"
-				if grep -q "motd.sh$" "$TERMUX_PREFIX/etc/termux-login.sh"; then
-					sed -i "s|.*motd\.sh$|# |" "$TERMUX_PREFIX/etc/termux-login.sh"
-				fi
+				check_and_restore "$TERMUX_PREFIX/etc/termux-login.sh"
 				package_check_and_remove "nerdfix fontconfig-utils bat eza"
 			fi
 			#remove browser
