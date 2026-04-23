@@ -18,24 +18,26 @@
 
 set -euo pipefail
 
-readonly TERMUX_HOME=${HOME:-/data/data/com.termux/files/home}
-readonly USB_BM_FILE="${USB_BM_FILE:-$TERMUX_HOME/.config/gtk-3.0/bookmarks}"
+readonly USB_BM_FILE="${USB_BM_FILE:-$HOME/.config/gtk-3.0/bookmarks}"
 readonly USB_LABEL_PREFIX="${USB_LABEL_PREFIX:-USB-}"
 readonly USB_DESKTOP_LINKS="${USB_DESKTOP_LINKS:-}"
-readonly DESKTOP_DIR="TERMUX_HOME/Desktop"
-readonly LOCK_FILE="${LOCK_FILE:-$TERMUX_HOME/.cache/usb-bookmarks.lock}"
+readonly DESKTOP_DIR="${HOME}/Desktop"
+readonly LOCK_FILE="${LOCK_FILE:-$HOME/.cache/usb-bookmarks.lock}"
 
 mkdir -p "$(dirname "$USB_BM_FILE")" "$(dirname "$LOCK_FILE")"
 
-# Acquire lock (avoid concurrent runs)
+# lock
 exec 9>"$LOCK_FILE"
 flock -w 5 9 || exit 0
 
-# Helpers
 is_usb_uri() {
 	case "$1" in
-	file:///storage/[0-9A-Fa-f-]* | file:///mnt/media_rw/[0-9A-Fa-f-]*) return 0 ;;
-	*) return 1 ;;
+	file:///storage/[0-9A-Fa-f-]* | file:///mnt/media_rw/[0-9A-Fa-f-]*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
 	esac
 }
 
@@ -55,55 +57,48 @@ preferred_uri_for_uuid() {
 	fi
 }
 
-# Build new managed lines for current state
 build_new_managed() {
 	local uuid
 	while IFS= read -r uuid; do
+		[ -n "$uuid" ] || continue
 		printf '%s %s%s\n' "$(preferred_uri_for_uuid "$uuid")" "$USB_LABEL_PREFIX" "$uuid"
 	done < <(scan_uuid_list)
 }
 
-# Filter: keep every line except lines that are ours (label startswith prefix AND uri is USB-root)
 filter_keep_nonmanaged() {
 	[ -f "$USB_BM_FILE" ] || return 0
+
+	local line uri label
 	while IFS= read -r line || [ -n "$line" ]; do
 		[ -n "$line" ] || continue
+
 		uri="${line%% *}"
 		label="${line#* }"
 		[ "$uri" = "$label" ] && label="$uri"
+
 		if is_usb_uri "$uri" && [[ "$label" == "$USB_LABEL_PREFIX"* ]]; then
-			# our old managed line -> drop
-			:
-		else
-			printf '%s\n' "$line"
+			# managed USB bookmark -> remove
+			continue
 		fi
+
+		printf '%s\n' "$line"
 	done <"$USB_BM_FILE"
 }
 
-# Main write
 write_bookmarks() {
-	local tmp keep new old_nonmanaged_cnt new_nonmanaged_cnt
+	local tmp new
 	tmp="$(mktemp)"
-	keep="$(filter_keep_nonmanaged || true)"
-	# Count nonmanaged before/after to ensure we didn't drop user's lines
-	old_nonmanaged_cnt=0
-	[ -f "$USB_BM_FILE" ] && old_nonmanaged_cnt=$(awk '{
-    uri=$1; lbl=substr($0,index($0,$2));
-    if (index(lbl,uri)==1) lbl=uri;
-    if (uri ~ /^file:\/\/\/(storage|mnt\/media_rw)\/[0-9A-Fa-f-]+$/ && substr(lbl,1,ENVIRON["USB_LABEL_PREFIX_LEN"])==ENVIRON["USB_LABEL_PREFIX"]) next;
-    print $0
-  }' USB_LABEL_PREFIX_LEN=${#USB_LABEL_PREFIX} USB_LABEL_PREFIX="$USB_LABEL_PREFIX" "$USB_BM_FILE" | wc -l | tr -d ' ')
-	printf '%s\n' "$keep" >"$tmp"
+
+	filter_keep_nonmanaged | sed '/^$/d' >"$tmp"
+
 	new="$(build_new_managed || true)"
 	if [ -n "$new" ]; then
+		if [ -s "$tmp" ]; then
+			printf '\n' >>"$tmp"
+		fi
 		printf '%s\n' "$new" >>"$tmp"
 	fi
-	new_nonmanaged_cnt=$(printf '%s\n' "$keep" | sed '/^$/d' | wc -l | tr -d ' ')
-	if [ "$new_nonmanaged_cnt" -lt "$old_nonmanaged_cnt" ] && [ -z "${USB_ALLOW_DROP_NONMANAGED:-}" ]; then
-		echo "[usb-bookmarks] Safety abort: would drop user bookmarks (old keep=$old_nonmanaged_cnt, new keep=$new_nonmanaged_cnt). Set USB_ALLOW_DROP_NONMANAGED=1 to override." >&2
-		rm -f "$tmp"
-		return 1
-	fi
+
 	if [ ! -f "$USB_BM_FILE" ] || ! cmp -s "$tmp" "$USB_BM_FILE"; then
 		if [ "${DRY_RUN:-}" = "1" ]; then
 			cat "$tmp"
@@ -116,12 +111,22 @@ write_bookmarks() {
 	fi
 }
 
-make_desktop_links() {
+clean_desktop_links() {
 	[ -n "$USB_DESKTOP_LINKS" ] || return 0
 	mkdir -p "$DESKTOP_DIR"
 	find "$DESKTOP_DIR" -maxdepth 1 -type l -name "${USB_LABEL_PREFIX}*" -print0 2>/dev/null | xargs -0r rm -f
+}
+
+make_desktop_links() {
+	[ -n "$USB_DESKTOP_LINKS" ] || return 0
+	mkdir -p "$DESKTOP_DIR"
+
+	clean_desktop_links
+
+	local uuid target
 	while IFS= read -r uuid; do
-		local target="/storage/$uuid"
+		[ -n "$uuid" ] || continue
+		target="/storage/$uuid"
 		[ -r "$target" ] || target="/mnt/media_rw/$uuid"
 		ln -sfn "$target" "${DESKTOP_DIR}/${USB_LABEL_PREFIX}${uuid}"
 	done < <(scan_uuid_list)
@@ -133,9 +138,10 @@ one_shot() {
 }
 
 watch_loop() {
-	local prev=""
+	local prev="__INIT__"
+	local now
+
 	while :; do
-		local now
 		now="$(scan_uuid_list | tr '\n' ' ')"
 		if [ "$now" != "$prev" ]; then
 			one_shot
@@ -146,13 +152,19 @@ watch_loop() {
 }
 
 case "${1:-}" in
---watch) watch_loop ;;
---dry-run) DRY_RUN=1 write_bookmarks ;;
---clean)
-	# remove only our lines
-	tmp="$(mktemp)"
-	filter_keep_nonmanaged >"$tmp"
-	mv -f "$tmp" "$USB_BM_FILE"
+--watch)
+	watch_loop
 	;;
-*) one_shot ;;
+--dry-run)
+	DRY_RUN=1 write_bookmarks
+	;;
+--clean)
+	tmp="$(mktemp)"
+	filter_keep_nonmanaged | sed '/^$/d' >"$tmp"
+	mv -f "$tmp" "$USB_BM_FILE"
+	clean_desktop_links || true
+	;;
+*)
+	one_shot
+	;;
 esac
