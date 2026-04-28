@@ -3810,36 +3810,36 @@ function setup_tx11start_cmd() {
 			    export DISPLAY=:${display_number}
 
 			    # Start pulseaudio unless --help was given
-				if [[ "$1" != "--help" && "$1" != "-h" ]]; then
+				if [[ "\$1" != "--help" && "\$1" != "-h" ]]; then
 				  termux-wake-lock
-				
-				  if $use_debug; then
+
+				  if \$use_debug; then
 				    pulseaudio -k 2>&1 || true
 				    pkill -9 pulseaudio 2>&1 || true
 				  else
 				    pulseaudio -k >/dev/null 2>&1 || true
 				    pkill -9 pulseaudio >/dev/null 2>&1 || true
 				  fi
-				
-				  if $use_debug; then
-				    rm -rf "$HOME/.config/pulse/"*-runtime
+
+				  if \$use_debug; then
+				    rm -rf "$TERMUX_HOME/.config/pulse/"*-runtime/
 				  else
-				    rm -rf "$HOME/.config/pulse/"*-runtime >/dev/null 2>&1
+				    rm -rf "$TERMUX_HOME/.config/pulse/"*-runtime/ >/dev/null 2>&1
 				  fi
-				
-				  if $use_debug; then
+
+				  if \$use_debug; then
 				    pulseaudio --start --exit-idle-time=-1
 				  else
 				    pulseaudio --start --exit-idle-time=-1 >/dev/null 2>&1
 				  fi
-				
+
 				  if ! pulseaudio --check >/dev/null 2>&1; then
 				      print_failed "pulseaudio failed to start (likely already running or stale runtime state)." >&2
 				      pgrep -a pulseaudio >&2 || true
 				    exit 1
 				  fi
-				
-				  if $use_debug; then
+
+				  if \$use_debug; then
 				    pacmd load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1
 				    pactl load-module module-sles-source
 				  else
@@ -3989,11 +3989,21 @@ function setup_tx11start_cmd() {
 			    # Start pulseaudio unless --help was given
 			    if [[ "\$1" != "--help" ]]; then
 			      termux-wake-lock
+
+				  if \$use_debug; then
+				    pulseaudio -k 2>&1 || true
+				    pkill -9 pulseaudio 2>&1 || true
+				  else
+				    pulseaudio -k >/dev/null 2>&1 || true
+				    pkill -9 pulseaudio >/dev/null 2>&1 || true
+				  fi
+
 			      if \$use_debug; then
-			          rm -rf ~/.config/pulse/*-runtime/pid
+			          rm -rf $TERMUX_HOME/.config/pulse/*-runtime/
 			      else
-			          rm -rf ~/.config/pulse/*-runtime/pid >/dev/null 2>&1
+			          rm -rf $TERMUX_HOME/.config/pulse/*-runtime/ >/dev/null 2>&1
 			      fi
+
 			      # pulseaudio --start --load="module-aaudio-sink" --exit-idle-time=-1
 			      pulseaudio --start --exit-idle-time=-1
 			      pacmd load-module module-native-protocol-tcp auth-ip-acl=127.0.0.1 auth-anonymous=1
