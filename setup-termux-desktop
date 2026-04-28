@@ -1902,17 +1902,20 @@ function choose_distro() {
 	echo " "
 	echo "${Y}2. Ubuntu${NC}"
 	echo " "
-	echo "${Y}3. Arch (Unstable | isn't fully suppoted by My AppStore)${NC}"
+	echo "${Y}3. Ubuntu 24.04${NC}"
 	echo " "
-	echo "${Y}4. Fedora${NC}"
+	echo "${Y}4. Arch (Unstable | isn't fully suppoted by My AppStore)${NC}"
+	echo " "
+	echo "${Y}5. Fedora${NC}"
 	echo " "
 	select_an_option 4 1 distro_answer
 	# shellcheck disable=SC2154
 	case "$distro_answer" in
 	1) selected_distro="debian" ;;
 	2) selected_distro="ubuntu" ;;
-	3) selected_distro="archlinux" ;;
-	4) selected_distro="fedora" ;;
+	3) selected_distro="ubuntu2404" ;;
+	4) selected_distro="archlinux" ;;
+	5) selected_distro="fedora" ;;
 	*) selected_distro="debian" ;;
 	esac
 

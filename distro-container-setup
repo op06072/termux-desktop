@@ -260,7 +260,7 @@ function pd_package_install_and_check() {
 
 		# Install package and handle errors
 		install_failed=false
-		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]]; then
+		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 			if $use_sudo; then
 				if ! sudo apt install "$package_name" -y; then
 					install_failed=true
@@ -295,7 +295,7 @@ function pd_package_install_and_check() {
 		# Handle error in installation
 		if $install_failed; then
 			print_failed "${BOLD} Error detected during installation of: ${C}$package_name${NC}"
-			if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]]; then
+			if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 				if $use_sudo; then
 					sudo apt --fix-broken install -y
 					sudo dpkg --configure -a
@@ -327,7 +327,7 @@ function pd_package_install_and_check() {
 		fi
 
 		# Reinstall if necessary
-		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]]; then
+		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 			if ! dpkg -s "$package_name" >/dev/null 2>&1; then
 				if $use_sudo; then
 					sudo apt install "$package_name" -y
@@ -354,7 +354,7 @@ function pd_package_install_and_check() {
 		fi
 
 		# Check installation
-		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]]; then
+		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 			if dpkg -s "$package_name" >/dev/null 2>&1; then
 				print_success "$package_name ${G}installed successfully"
 			else
@@ -511,7 +511,7 @@ function create_shell_script() {
 function update_distro_repo() {
 	print_msg "${BOLD}Updating $selected_distro And Installing Required Packages"
 	echo
-	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
+	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt update
 		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt upgrade -y -o Dpkg::Options::="--force-confnew"
 		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt install sudo apt-file -y
@@ -634,7 +634,7 @@ function distro_zsh_setup() {
 			cat <<-EOF
 				pd_package_install_and_check "git zsh wget"
 
-				if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
+				if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 				chsh -s /usr/bin/zsh ${final_user_name}
 				else
 				chsh -s /bin/zsh ${final_user_name}
@@ -656,7 +656,7 @@ function distro_zsh_setup() {
 function distro_terminal_utility_setup() {
 	if [[ "$terminal_utility_setup_answer" == "y" ]]; then
 
-		if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
+		if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 			terminal_utility_content=$(
 				cat <<-'EOF'
 					pd_package_install_and_check "zoxide bat wget gpg fzf eza fastfetch nala"
@@ -1823,7 +1823,7 @@ function distro_create_app_installer() {
 
 	save_root_path="$distro_path/root"
 	add_installer_common
-	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
+	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 		debian_based_app_installer
 	elif [[ "$selected_distro" == "archlinux" ]]; then
 		arch_based_app_installer
@@ -2186,7 +2186,7 @@ function distro_app_launch_setup() {
 #########################################################################
 
 function add_useful_repos() {
-	if [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "debian" ]]; then
+	if [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 		print_msg "Adding some useful repos..."
 		added_repo_list=$(
 			cat <<-EOF
@@ -2227,7 +2227,7 @@ function add_useful_repos() {
 function install_some_required_pack() {
 	local some_required_pack_list=""
 
-	if [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "debian" ]]; then
+	if [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
 		# Debian/Ubuntu
 		some_required_pack_list="\
 zlib1g zlib1g-dev fuse xdg-utils apt-file dbus dbus-x11 \
