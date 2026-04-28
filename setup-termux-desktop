@@ -71,6 +71,7 @@ readonly DOWNLOAD_TIMEOUT=15
 readonly TERMUX_DESKTOP_PATH="$TERMUX_PREFIX/etc/termux-desktop"
 readonly CONFIG_FILE="$TERMUX_DESKTOP_PATH/configuration.conf"
 readonly LOG_FILE="$TERMUX_HOME/termux-desktop.log"
+readonly LATEST_APPSTORE_VERSION="1.0.0"
 CALL_FROM_CHANGE_DISTRO=false
 CALL_FROM_CHANGE_STYLE=false
 IS_TERMUX_API_INSTALLED=false
@@ -4678,13 +4679,24 @@ function photo_editor_installer() {
 
 function install_termux_desktop_appstore() {
 	banner
-	print_msg "${C}Setting up AppStore..."
+	print_msg "Setting up AppStore..."
 	echo
-	download_file "https://raw.githubusercontent.com/$REPO_OWNER/Termux-AppStore/refs/heads/src/appstore"
-	chmod +x "appstore"
-	./appstore --install v0.5.4.1
-	cp "${PREFIX}/share/applications/org.sabamdarif.termux.appstore.desktop" "$TERMUX_HOME/Desktop"
-	chmod +x "$TERMUX_HOME/Desktop/org.sabamdarif.termux.appstore.desktop"
+	cd "$TMPDIR" || return
+	if [[ "$PACKAGE_MANAGER" == "pacman" ]]; then
+		download_file "https://github.com/sabamdarif/Termux-AppStore/releases/download/v${LATEST_APPSTORE_VERSION}/termux-appstore-${LATEST_APPSTORE_VERSION}-0-${termux_arch}.pkg.tar.xz"
+		update_sys
+		pacman -U --noconfirm "termux-appstore-${LATEST_APPSTORE_VERSION}-0-${termux_arch}.pkg.tar.xz"
+		check_and_delete "termux-appstore-${LATEST_APPSTORE_VERSION}-0-${termux_arch}.pkg.tar.xz"
+	else
+		download_file "https://github.com/sabamdarif/Termux-AppStore/releases/download/v${LATEST_APPSTORE_VERSION}/termux-appstore_${LATEST_APPSTORE_VERSION}_${termux_arch}.deb"
+		update_sys
+		dpkg --configure -a
+		apt --fix-broken install -y
+		apt install ./"termux-appstore_${LATEST_APPSTORE_VERSION}_${termux_arch}.deb" -y
+		apt install --fix-missing -y
+		check_and_delete "termux-appstore_${LATEST_APPSTORE_VERSION}_${termux_arch}.deb"
+	fi
+	cd "$TERMUX_HOME" || return
 }
 
 #########################################################################
@@ -5346,9 +5358,7 @@ function remove_termux_desktop() {
 				# shellcheck disable=SC2164
 				cd "$TERMUX_HOME"
 				# remove appstore
-				package_check_and_remove "aria2 python"
-				check_and_delete "${PREFIX}/opt/appstore"
-				check_and_delete "${PREFIX}/share/applications/org.sabamdarif.termux.appstore.desktop"
+				package_check_and_remove "termux-appstore"
 			fi
 			check_and_delete "$TERMUX_PREFIX/etc/termux-desktop $TERMUX_PREFIX/bin/setup-termux-desktop"
 			clear
@@ -6314,7 +6324,7 @@ case $1 in
 	;;
 --update)
 	check_for_update_and_update_installer "$1"
-	check_for_appstore_update
+	# check_for_appstore_update
 	;;
 --help | -h)
 	show_help
