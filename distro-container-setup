@@ -446,11 +446,29 @@ function create_shell_script() {
 			BOLD="$BOLD"
 		EOF
 	fi
+	# Functions copied into the in-distro setup script. Order doesn't
+	# matter, but pd_package_install_and_check depends on detect_pkg_manager
+	# and pd_package_is_installed at runtime, so those two MUST stay in
+	# the list — without them the in-distro script silently no-ops every
+	# install (case "$pm" matches nothing).
+	local exported_funcs=(
+		check_termux log_debug print_success print_failed print_warn print_msg
+		wait_for_keypress check_and_create_directory check_and_delete
+		check_and_backup download_file check_and_restore
+		detect_package_manager package_install_and_check
+		install_package_with_retry package_check_and_remove
+		remove_package_with_retry get_file_name_number
+		extract_zip_with_progress extract_archive download_and_extract
+		count_subfolders confirmation_y_or_n get_latest_release
+		install_font_for_style select_an_option read_conf print_to_config
+		detect_pkg_manager pd_package_is_installed pd_package_install_and_check
+		set_distro_paths setup_distro
+	)
 	if [[ "$selected_distro_type" == "chroot" ]]; then
-		typeset -f check_termux log_debug print_success print_failed print_warn print_msg wait_for_keypress check_and_create_directory check_and_delete check_and_backup download_file check_and_restore detect_package_manager package_install_and_check install_package_with_retry package_check_and_remove remove_package_with_retry get_file_name_number extract_zip_with_progress extract_archive download_and_extract count_subfolders confirmation_y_or_n get_latest_release install_font_for_style select_an_option read_conf print_to_config pd_package_install_and_check set_distro_paths setup_distro | sudo tee -a "$script_path" >/dev/null
+		typeset -f "${exported_funcs[@]}" | sudo tee -a "$script_path" >/dev/null
 		echo "$shell_setup_content" | sudo tee -a "$script_path" >/dev/null
 	else
-		typeset -f check_termux log_debug print_success print_failed print_warn print_msg wait_for_keypress check_and_create_directory check_and_delete check_and_backup download_file check_and_restore detect_package_manager package_install_and_check install_package_with_retry package_check_and_remove remove_package_with_retry get_file_name_number extract_zip_with_progress extract_archive download_and_extract count_subfolders confirmation_y_or_n get_latest_release install_font_for_style select_an_option read_conf print_to_config pd_package_install_and_check set_distro_paths setup_distro >>"$script_path"
+		typeset -f "${exported_funcs[@]}" >>"$script_path"
 		echo "$shell_setup_content" >>"$script_path"
 	fi
 	# Make script executable
