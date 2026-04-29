@@ -315,13 +315,28 @@ function setup_turnip_proot() {
 	banner
 	print_msg "${BOLD}Installing required packages for turnip..."
 	echo
-	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]]; then
-		turnip_related_packs="xdg-desktop-portal libgl1 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers libvulkan1"
-	elif [[ "$selected_distro" == "fedora" ]]; then
-		turnip_related_packs="xdg-desktop-portal mesa-libGL mesa-dri-drivers vulkan-loader mesa-vulkan-drivers"
-	elif [[ "$selected_distro" == "archlinux" ]]; then
-		turnip_related_packs="xdg-desktop-portal mesa vulkan-icd-loader vulkan-mesa-layers"
-	fi
+	# Pick the package list based on the package manager that the rootfs ships
+	# with, so adding a new distro upstream does not require touching this code.
+	local _pmbin _distro_pm="unknown"
+	for _pmbin in apt dnf pacman apk zypper xbps-install; do
+		if [[ -x "$distro_path/usr/bin/$_pmbin" || -x "$distro_path/bin/$_pmbin" ]]; then
+			case "$_pmbin" in
+				xbps-install) _distro_pm="xbps" ;;
+				*) _distro_pm="$_pmbin" ;;
+			esac
+			break
+		fi
+	done
+
+	case "$_distro_pm" in
+		apt) turnip_related_packs="xdg-desktop-portal libgl1 libgl1-mesa-dri libvulkan1 mesa-vulkan-drivers libvulkan1" ;;
+		dnf) turnip_related_packs="xdg-desktop-portal mesa-libGL mesa-dri-drivers vulkan-loader mesa-vulkan-drivers" ;;
+		pacman) turnip_related_packs="xdg-desktop-portal mesa vulkan-icd-loader vulkan-mesa-layers" ;;
+		*)
+			print_failed "Turnip package list is not defined for package manager '${_distro_pm}'"
+			return 1
+			;;
+	esac
 
 	TURNIP_MESA_VERSION="26.0.5"
 

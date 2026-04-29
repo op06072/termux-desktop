@@ -237,8 +237,41 @@ function setup_distro() {
 #
 #########################################################################
 
+# Detect the package manager available inside the current environment.
+# Echoes one of: apt | dnf | pacman | apk | zypper | xbps | unknown
+function detect_pkg_manager() {
+	if command -v apt >/dev/null 2>&1; then
+		echo "apt"
+	elif command -v dnf >/dev/null 2>&1; then
+		echo "dnf"
+	elif command -v pacman >/dev/null 2>&1; then
+		echo "pacman"
+	elif command -v apk >/dev/null 2>&1; then
+		echo "apk"
+	elif command -v zypper >/dev/null 2>&1; then
+		echo "zypper"
+	elif command -v xbps-install >/dev/null 2>&1; then
+		echo "xbps"
+	else
+		echo "unknown"
+	fi
+}
+
+function pd_package_is_installed() {
+	local package_name="$1"
+	local pm
+	pm="$(detect_pkg_manager)"
+	case "$pm" in
+		apt) dpkg -s "$package_name" >/dev/null 2>&1 ;;
+		dnf | zypper) rpm -q "$package_name" >/dev/null 2>&1 ;;
+		pacman) pacman -Qi "$package_name" >/dev/null 2>&1 ;;
+		apk) apk info -e "$package_name" >/dev/null 2>&1 ;;
+		xbps) xbps-query "$package_name" >/dev/null 2>&1 ;;
+		*) return 1 ;;
+	esac
+}
+
 function pd_package_install_and_check() {
-	# Check for --root flag
 	local use_sudo=true
 	if [[ "$1" == "--root" ]]; then
 		use_sudo=false
@@ -246,138 +279,71 @@ function pd_package_install_and_check() {
 	fi
 
 	# shellcheck disable=SC2206
-	packs_list=($@)
+	local packs_list=($@)
 
-	# Get distro id
-	# shellcheck disable=SC1091
-	if [ -f /etc/os-release ]; then
-		. /etc/os-release
+	local pm
+	pm="$(detect_pkg_manager)"
+	if [[ "$pm" == "unknown" ]]; then
+		print_failed "${BOLD} No supported package manager found inside the distro"
+		return 1
 	fi
 
-	# Install package
+	local sudo_cmd=()
+	$use_sudo && sudo_cmd=(sudo)
+
+	# Refresh package metadata once per call.
+	case "$pm" in
+		apt) "${sudo_cmd[@]}" apt update ;;
+		dnf) "${sudo_cmd[@]}" dnf makecache -y ;;
+		pacman) "${sudo_cmd[@]}" pacman -Sy --noconfirm ;;
+		apk) "${sudo_cmd[@]}" apk update ;;
+		zypper) "${sudo_cmd[@]}" zypper --non-interactive refresh ;;
+		xbps) "${sudo_cmd[@]}" xbps-install -S ;;
+	esac
+
+	local package_name install_failed
 	for package_name in "${packs_list[@]}"; do
 		print_msg "${BOLD}Installing package: ${C}$package_name"
-
-		# Install package and handle errors
 		install_failed=false
-		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-			if $use_sudo; then
-				if ! sudo apt install "$package_name" -y; then
-					install_failed=true
-				fi
-			else
-				if ! apt install "$package_name" -y; then
-					install_failed=true
-				fi
-			fi
-		elif [[ "$ID" == arch* ]]; then
-			if $use_sudo; then
-				if ! sudo pacman -Sy --noconfirm "$package_name"; then
-					install_failed=true
-				fi
-			else
-				if ! pacman -Sy --noconfirm "$package_name"; then
-					install_failed=true
-				fi
-			fi
-		elif [[ "$ID" == "fedora" ]]; then
-			if $use_sudo; then
-				if ! sudo dnf install "$package_name" -y; then
-					install_failed=true
-				fi
-			else
-				if ! dnf install "$package_name" -y; then
-					install_failed=true
-				fi
-			fi
-		fi
 
-		# Handle error in installation
+		case "$pm" in
+			apt) "${sudo_cmd[@]}" apt install "$package_name" -y || install_failed=true ;;
+			dnf) "${sudo_cmd[@]}" dnf install "$package_name" -y || install_failed=true ;;
+			pacman) "${sudo_cmd[@]}" pacman -S --noconfirm "$package_name" || install_failed=true ;;
+			apk) "${sudo_cmd[@]}" apk add "$package_name" || install_failed=true ;;
+			zypper) "${sudo_cmd[@]}" zypper --non-interactive install "$package_name" || install_failed=true ;;
+			xbps) "${sudo_cmd[@]}" xbps-install -y "$package_name" || install_failed=true ;;
+		esac
+
+		# Recovery path: try to repair the package manager state and reinstall.
 		if $install_failed; then
 			print_failed "${BOLD} Error detected during installation of: ${C}$package_name${NC}"
-			if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-				if $use_sudo; then
-					sudo apt --fix-broken install -y
-					sudo dpkg --configure -a
-					sudo apt install "$package_name" -y
-				else
-					apt --fix-broken install -y
-					dpkg --configure -a
-					apt install "$package_name" -y
-				fi
-			elif [[ "$ID" == arch* ]]; then
-				if $use_sudo; then
-					sudo pacman -Syu --noconfirm
-					sudo pacman -Sy --noconfirm "$package_name"
-				else
-					pacman -Syu --noconfirm
-					pacman -Sy --noconfirm "$package_name"
-				fi
-			elif [[ "$ID" == "fedora" ]]; then
-				if $use_sudo; then
-					sudo dnf --refresh install -y
-					sudo rpm --rebuilddb
-					sudo dnf install "$package_name" -y
-				else
-					dnf --refresh install -y
-					rpm --rebuilddb
-					dnf install "$package_name" -y
-				fi
-			fi
+			case "$pm" in
+				apt)
+					"${sudo_cmd[@]}" apt --fix-broken install -y
+					"${sudo_cmd[@]}" dpkg --configure -a
+					"${sudo_cmd[@]}" apt install "$package_name" -y
+					;;
+				dnf)
+					"${sudo_cmd[@]}" rpm --rebuilddb
+					"${sudo_cmd[@]}" dnf --refresh install "$package_name" -y
+					;;
+				pacman)
+					"${sudo_cmd[@]}" pacman -Syu --noconfirm
+					"${sudo_cmd[@]}" pacman -S --noconfirm "$package_name"
+					;;
+				apk) "${sudo_cmd[@]}" apk add --force-overwrite "$package_name" ;;
+				zypper) "${sudo_cmd[@]}" zypper --non-interactive install --force "$package_name" ;;
+				xbps) "${sudo_cmd[@]}" xbps-install -Syu && "${sudo_cmd[@]}" xbps-install -y "$package_name" ;;
+			esac
 		fi
 
-		# Reinstall if necessary
-		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-			if ! dpkg -s "$package_name" >/dev/null 2>&1; then
-				if $use_sudo; then
-					sudo apt install "$package_name" -y
-				else
-					apt install "$package_name" -y
-				fi
-			fi
-		elif [[ "$ID" == arch* ]]; then
-			if ! pacman -Qi "$package_name" >/dev/null 2>&1; then
-				if $use_sudo; then
-					sudo pacman -Sy --noconfirm "$package_name"
-				else
-					pacman -Sy --noconfirm "$package_name"
-				fi
-			fi
-		elif [[ "$ID" == "fedora" ]]; then
-			if ! rpm -q "$package_name" >/dev/null 2>&1; then
-				if $use_sudo; then
-					sudo dnf install "$package_name" -y
-				else
-					dnf install "$package_name" -y
-				fi
-			fi
-		fi
-
-		# Check installation
-		if [[ "$ID" == "debian" ]] || [[ "$ID" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-			if dpkg -s "$package_name" >/dev/null 2>&1; then
-				print_success "$package_name ${G}installed successfully"
-			else
-				if command -v wget &>/dev/null || ls "$TERMUX_PREFIX/bin/"*"$package_name"* >/dev/null 2>&1; then
-					print_success "$package_name ${G}installed successfully"
-				fi
-			fi
-		elif [[ "$ID" == arch* ]]; then
-			if pacman -Qi "$package_name" >/dev/null 2>&1; then
-				print_success "$package_name ${G}installed successfully"
-			else
-				if command -v wget &>/dev/null || ls "$TERMUX_PREFIX/bin/"*"$package_name"* >/dev/null 2>&1; then
-					print_success "$package_name ${G}installed successfully"
-				fi
-			fi
-		elif [[ "$ID" == "fedora" ]]; then
-			if rpm -q "$package_name" >/dev/null 2>&1; then
-				print_success "$package_name ${G}installed successfully"
-			else
-				if command -v wget &>/dev/null || ls "$TERMUX_PREFIX/bin/"*"$package_name"* >/dev/null 2>&1; then
-					print_success "$package_name ${G}installed successfully"
-				fi
-			fi
+		if pd_package_is_installed "$package_name"; then
+			print_success "$package_name ${G}installed successfully"
+		elif command -v wget &>/dev/null || ls "$TERMUX_PREFIX/bin/"*"$package_name"* >/dev/null 2>&1; then
+			print_success "$package_name ${G}installed successfully"
+		else
+			print_failed "$package_name ${R}installation check failed"
 		fi
 	done
 	echo ""
@@ -511,20 +477,69 @@ function create_shell_script() {
 function update_distro_repo() {
 	print_msg "${BOLD}Updating $selected_distro And Installing Required Packages"
 	echo
-	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt update
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt upgrade -y -o Dpkg::Options::="--force-confnew"
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" apt install sudo apt-file -y
-	elif [[ "$selected_distro" == "archlinux" ]]; then
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" pacman -Syu --noconfirm
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" pacman -S --noconfirm sudo
-	elif [[ "$selected_distro" == "fedora" ]]; then
-		"${selected_distro_type}"-distro login "$selected_distro" -- /bin/bash -c "echo 'max_parallel_downloads=10' >> '/etc/dnf/dnf.conf'"
-		"${selected_distro_type}"-distro login "$selected_distro" -- /bin/bash -c "echo 'fastestmirror=True/' >> '/etc/dnf/dnf.conf'"
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" dnf update -y
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" dnf upgrade -y
-		"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- env DISPLAY=:"$display_number" dnf install sudo -y
-	fi
+
+	# Run a self-contained script inside the distro that picks the right
+	# package manager at runtime. Adding a new distro upstream (alpine, void,
+	# opensuse, ...) requires no changes here as long as it ships one of the
+	# supported package managers.
+	local update_script
+	update_script=$(
+		cat <<-'EOF'
+			set -e
+
+			detect_pkg_manager() {
+				if command -v apt >/dev/null 2>&1; then echo "apt"
+				elif command -v dnf >/dev/null 2>&1; then echo "dnf"
+				elif command -v pacman >/dev/null 2>&1; then echo "pacman"
+				elif command -v apk >/dev/null 2>&1; then echo "apk"
+				elif command -v zypper >/dev/null 2>&1; then echo "zypper"
+				elif command -v xbps-install >/dev/null 2>&1; then echo "xbps"
+				else echo "unknown"; fi
+			}
+
+			pm="$(detect_pkg_manager)"
+			case "$pm" in
+				apt)
+					apt update
+					apt upgrade -y -o Dpkg::Options::="--force-confnew"
+					apt install sudo apt-file -y
+					;;
+				dnf)
+					if [[ -f /etc/dnf/dnf.conf ]]; then
+						grep -q '^max_parallel_downloads=' /etc/dnf/dnf.conf || echo 'max_parallel_downloads=10' >> /etc/dnf/dnf.conf
+						grep -q '^fastestmirror=' /etc/dnf/dnf.conf || echo 'fastestmirror=True' >> /etc/dnf/dnf.conf
+					fi
+					dnf update -y
+					dnf install sudo -y
+					;;
+				pacman)
+					pacman -Syu --noconfirm
+					pacman -S --noconfirm sudo
+					;;
+				apk)
+					apk update && apk upgrade && apk add sudo
+					;;
+				zypper)
+					zypper --non-interactive refresh
+					zypper --non-interactive update
+					zypper --non-interactive install sudo
+					;;
+				xbps)
+					xbps-install -Syu
+					xbps-install -y sudo
+					;;
+				*)
+					echo "Unsupported package manager" >&2
+					exit 1
+					;;
+			esac
+		EOF
+	)
+
+	create_shell_script "$distro_path/root/pd_update_repo.sh" "$update_script"
+	"${selected_distro_type}"-distro login "$selected_distro" --shared-tmp -- \
+		env DISPLAY=":${display_number}" /bin/bash -c 'bash /root/pd_update_repo.sh'
+
 	if [[ "$selected_distro_type" == "proot" ]]; then
 		chmod -R +w "$distro_path/"
 	fi
@@ -634,11 +649,14 @@ function distro_zsh_setup() {
 			cat <<-EOF
 				pd_package_install_and_check "git zsh wget"
 
-				if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-				chsh -s /usr/bin/zsh ${final_user_name}
-				else
-				chsh -s /bin/zsh ${final_user_name}
+				# Resolve the actual zsh binary path on whatever distro we are running on
+				# (Debian/Ubuntu use /usr/bin/zsh, Arch/Fedora/Alpine use /bin/zsh, etc.)
+				zsh_path="\$(command -v zsh)"
+				if [[ -z "\$zsh_path" ]]; then
+					echo "zsh not found after install" >&2
+					exit 1
 				fi
+				chsh -s "\$zsh_path" ${final_user_name}
 				check_and_delete "pd_zsh_install.sh"
 			EOF
 		)
@@ -655,22 +673,17 @@ function distro_zsh_setup() {
 ##########################
 function distro_terminal_utility_setup() {
 	if [[ "$terminal_utility_setup_answer" == "y" ]]; then
-
-		if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-			terminal_utility_content=$(
-				cat <<-'EOF'
-					pd_package_install_and_check "zoxide bat wget gpg fzf eza fastfetch nala"
-					check_and_delete "pd_setup.sh"
-				EOF
-			)
-		else
-			terminal_utility_content=$(
-				cat <<-'EOF'
-					pd_package_install_and_check "zoxide bat wget gpg eza fastfetch fzf"
-					check_and_delete "pd_setup.sh"
-				EOF
-			)
-		fi
+		terminal_utility_content=$(
+			cat <<-'EOF'
+				# Common terminal utilities work everywhere; nala is apt-only.
+				packs="zoxide bat wget gpg fzf eza fastfetch"
+				if command -v apt >/dev/null 2>&1; then
+					packs="$packs nala"
+				fi
+				pd_package_install_and_check "$packs"
+				check_and_delete "pd_setup.sh"
+			EOF
+		)
 		create_shell_script "$save_path/pd_setup.sh" "$terminal_utility_content"
 		banner
 		print_msg "Configuring Terminal Utility For ${selected_distro}..."
@@ -1817,22 +1830,44 @@ function add_distro_function_caller() {
 	fi
 }
 
+# Inspect the extracted rootfs and report which package manager it ships
+# with. Echoes one of: apt | dnf | pacman | apk | zypper | xbps | unknown
+function detect_distro_pkg_manager() {
+	local d="${distro_path:-}"
+	local pmbin
+	for pmbin in apt dnf pacman apk zypper xbps-install; do
+		if [[ -x "$d/usr/bin/$pmbin" || -x "$d/bin/$pmbin" ]]; then
+			case "$pmbin" in
+				xbps-install) echo "xbps" ;;
+				*) echo "$pmbin" ;;
+			esac
+			return 0
+		fi
+	done
+	echo "unknown"
+}
+
 function distro_create_app_installer() {
 	banner
 	print_msg "${BOLD}Creating distro app manager..."
 
 	save_root_path="$distro_path/root"
 	add_installer_common
-	if [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-		debian_based_app_installer
-	elif [[ "$selected_distro" == "archlinux" ]]; then
-		arch_based_app_installer
-	elif [[ "$selected_distro" == "fedora" ]]; then
-		fedora_based_app_installer
-	fi
+
+	local distro_pm
+	distro_pm="$(detect_distro_pkg_manager)"
+	case "$distro_pm" in
+		apt) debian_based_app_installer ;;
+		pacman) arch_based_app_installer ;;
+		dnf) fedora_based_app_installer ;;
+		*)
+			print_msg "${Y}No bundled app installer for package manager '${distro_pm}'."
+			print_msg "${Y}Skipping app-installer body; the launcher itself will still work."
+			;;
+	esac
+
 	add_distro_function_caller
 	chmod +x "$TERMUX_PREFIX/bin/$selected_distro"
-
 }
 
 #####################
@@ -2186,72 +2221,76 @@ function distro_app_launch_setup() {
 #########################################################################
 
 function add_useful_repos() {
-	if [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-		print_msg "Adding some useful repos..."
-		added_repo_list=$(
-			cat <<-EOF
-				# Install necessary packages without prompts
-				pd_package_install_and_check "wget gpg apt-transport-https"
+	local distro_pm
+	distro_pm="$(detect_distro_pkg_manager)"
 
-				# Download and store the Microsoft GPG key
-				wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/keyrings/packages.microsoft.gpg > /dev/null
+	case "$distro_pm" in
+		apt)
+			print_msg "Adding some useful repos..."
+			added_repo_list=$(
+				cat <<-EOF
+					pd_package_install_and_check "wget gpg apt-transport-https"
 
-				# Set correct permissions on the key
-				sudo install -D -o root -g root -m 644 /etc/apt/keyrings/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
-
-				# Add the VS Code repository non-interactively
-				echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
-			EOF
+					wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor | sudo tee /etc/apt/keyrings/packages.microsoft.gpg > /dev/null
+					sudo install -D -o root -g root -m 644 /etc/apt/keyrings/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+					echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+				EOF
+			)
 			create_shell_script "$save_path/run_add_useful_repos.sh" "$added_repo_list"
 			"${selected_distro_type}"-distro login "$selected_distro" -- /bin/bash -c "bash /root/run_add_useful_repos.sh"
-		)
-	elif [[ "$selected_distro" == "fedora" ]]; then
-		print_msg "Adding some useful repos..."
-		added_repo_list=$(
-			cat <<-EOF
-				# Import Microsoft GPG key
-				rpm --import https://packages.microsoft.com/keys/microsoft.asc
-
-				# Add the VS Code repository without user interaction
-				echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" | sudo tee /etc/yum.repos.d/vscode.repo > /dev/null
-
-				# Update the package list
-				dnf check-update -y
-			EOF
+			;;
+		dnf)
+			print_msg "Adding some useful repos..."
+			added_repo_list=$(
+				cat <<-EOF
+					rpm --import https://packages.microsoft.com/keys/microsoft.asc
+					echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" | sudo tee /etc/yum.repos.d/vscode.repo > /dev/null
+					dnf check-update -y || true
+				EOF
+			)
 			create_shell_script "$save_path/run_add_useful_repos.sh" "$added_repo_list"
 			"${selected_distro_type}"-distro login "$selected_distro" -- /bin/bash -c "bash /root/run_add_useful_repos.sh"
-		)
-	fi
+			;;
+		*)
+			# No third-party repo recipe known for this package manager yet.
+			;;
+	esac
 }
 
 function install_some_required_pack() {
 	local some_required_pack_list=""
+	local distro_pm
+	distro_pm="$(detect_distro_pkg_manager)"
 
-	if [[ "$selected_distro" == "ubuntu" ]] || [[ "$selected_distro" == "debian" ]] || [[ "$selected_distro" == "ubuntu2404" ]]; then
-		# Debian/Ubuntu
-		some_required_pack_list="\
+	case "$distro_pm" in
+		apt)
+			some_required_pack_list="\
 zlib1g zlib1g-dev fuse xdg-utils apt-file dbus dbus-x11 \
 libnss3 libgtk-3-0 libx11-xcb1 libxext6 libxrender1 libxrandr2 \
 libxi6 libxtst6 libatk1.0-0 libatk-bridge2.0-0 libglib2.0-0 libglib2.0-bin \
 libpango-1.0-0 libcairo2 libfreetype6 libfontconfig1 libcups2 libdbus-1-3 \
 libdrm2 libgbm1 libxcomposite1 libxdamage1 libxcb-dri3-0 libxshmfence1"
-
-	elif [[ "$selected_distro" == "fedora" ]]; then
-		# Fedora (40+)
-		some_required_pack_list="\
+			;;
+		dnf)
+			some_required_pack_list="\
 zlib-ng fuse xdg-utils dbus \
 nss gtk3 alsa-lib libX11 libXext libXrender libXrandr libXi libXtst \
 atk at-spi2-atk glib2 pango cairo freetype fontconfig cups-libs dbus-libs \
 libdrm mesa-libgbm libXcomposite libXdamage libxcb libxshmfence"
-
-	elif [[ "$selected_distro" == "archlinux" ]]; then
-		# Arch Linux
-		some_required_pack_list="\
+			;;
+		pacman)
+			some_required_pack_list="\
 zlib fuse2 xdg-utils dbus \
 nss gtk3 alsa-lib libx11 libxext libxrender libxrandr libxi libxtst \
 atk at-spi2-core glib2 pango cairo freetype2 fontconfig cups dbus \
 libdrm mesa-libgbm libxcomposite libxdamage libxcb libxshmfence"
-	fi
+			;;
+		*)
+			print_msg "${Y}No required-packages list defined for '${distro_pm}'. Skipping."
+			return 0
+			;;
+	esac
+
 	banner
 	print_msg "Installing some distro specfic required packages"
 	pd_setup_some_required_pack=$(

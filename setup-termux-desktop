@@ -1895,30 +1895,98 @@ function distro_type_select() {
 	esac
 }
 
+# List proot-distro distros. Output is lines of "alias|Pretty Name".
+# Each upstream row looks like:  * Debian (trixie) < debian >
+function get_proot_distro_aliases() {
+	if ! command -v proot-distro >/dev/null 2>&1; then
+		package_install_and_check "proot-distro" >/dev/null 2>&1 || return 1
+	fi
+	# proot-distro ls writes its banner/footer mixed with the table to
+	# stderr; merge streams and only accept rows starting with "*".
+	proot-distro ls 2>&1 | sed -n 's/^[[:space:]]*\*[[:space:]]*\(.*\)< *\([^ >]*\) *>.*/\2|\1/p' \
+		| awk -F'|' '{
+			alias = $1; name = $2;
+			gsub(/[[:space:]]+$/, "", name);
+			gsub(/[[:space:]]+$/, "", alias);
+			if (alias != "") print alias "|" name;
+		}'
+}
+
+# List chroot-distro distros. chroot-distro is a root-only binary at
+# /system/bin/chroot-distro, so we either call it through the Termux
+# wrapper (if it has been created already) or via `su -c`. Output rows
+# look like " * debian (trixie) [not installed]" with ANSI colors that
+# we strip before parsing.
+function get_chroot_distro_aliases() {
+	local raw=""
+	if command -v chroot-distro >/dev/null 2>&1; then
+		raw="$(chroot-distro list 2>&1)" || return 1
+	elif command -v su >/dev/null 2>&1 && su -c true >/dev/null 2>&1; then
+		raw="$(su -c '/system/bin/chroot-distro list' 2>&1)" || return 1
+	else
+		return 1
+	fi
+
+	printf '%s\n' "$raw" | awk '
+		{
+			# Strip ANSI color escapes so the regex below is reliable.
+			gsub(/\033\[[0-9;]*[a-zA-Z]/, "")
+			if ($0 ~ /^[[:space:]]*\*/) {
+				sub(/^[[:space:]]*\*[[:space:]]*/, "")
+				if (match($0, /^[A-Za-z0-9_-]+/)) {
+					alias = substr($0, 1, RLENGTH)
+					rest = substr($0, RLENGTH + 1)
+					if (match(rest, /^[[:space:]]*\([^)]+\)/)) {
+						ver = substr(rest, RSTART, RLENGTH)
+						gsub(/^[[:space:]]+/, "", ver)
+						printf "%s|%s %s\n", alias, alias, ver
+					} else {
+						printf "%s|%s\n", alias, alias
+					}
+				}
+			}
+		}'
+}
+
+# Dispatch helper: returns "alias|Pretty Name" rows for whatever distro
+# backend the user picked in distro_type_select.
+function get_supported_distros() {
+	if [[ "$selected_distro_type" == "chroot" ]]; then
+		get_chroot_distro_aliases
+	else
+		get_proot_distro_aliases
+	fi
+}
+
 function choose_distro() {
 	print_msg "${BOLD}Select Linux Distro You Want To Add"
 	echo " "
-	echo "${Y}1. Debian${NC}"
-	echo " "
-	echo "${Y}2. Ubuntu${NC}"
-	echo " "
-	echo "${Y}3. Ubuntu 24.04${NC}"
-	echo " "
-	echo "${Y}4. Arch (Unstable | isn't fully suppoted by My AppStore)${NC}"
-	echo " "
-	echo "${Y}5. Fedora${NC}"
-	echo " "
-	select_an_option 4 1 distro_answer
-	# shellcheck disable=SC2154
-	case "$distro_answer" in
-	1) selected_distro="debian" ;;
-	2) selected_distro="ubuntu" ;;
-	3) selected_distro="ubuntu2404" ;;
-	4) selected_distro="archlinux" ;;
-	5) selected_distro="fedora" ;;
-	*) selected_distro="debian" ;;
-	esac
 
+	local entries=()
+	mapfile -t entries < <(get_supported_distros)
+
+	if ((${#entries[@]} == 0)); then
+		local backend="${selected_distro_type:-proot}-distro"
+		print_failed " Could not list distros from ${backend}. Falling back to debian."
+		selected_distro="debian"
+		return 0
+	fi
+
+	local i alias name
+	for i in "${!entries[@]}"; do
+		alias="${entries[$i]%%|*}"
+		name="${entries[$i]#*|}"
+		echo "${Y}$((i + 1)). ${name} ${NC}(${C}${alias}${NC})"
+		echo " "
+	done
+
+	select_an_option "${#entries[@]}" 1 distro_answer
+	# shellcheck disable=SC2154
+	if [[ "$distro_answer" =~ ^[0-9]+$ ]] && ((distro_answer >= 1 && distro_answer <= ${#entries[@]})); then
+		selected_distro="${entries[$((distro_answer - 1))]%%|*}"
+	else
+		selected_distro="${entries[0]%%|*}"
+	fi
 }
 
 function setup_user_name_only() {
