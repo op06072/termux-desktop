@@ -56,6 +56,20 @@ readonly REPO_BRANCH_MAIN="main"
 readonly REPO_SETUP_FILE_BRANCH="setup-files"
 readonly REPO_SETUP_FILES_FOLDER="setup-files"
 readonly REPO_RAW_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}"
+
+# The only two pieces of "code" that get auto-fetched on every run are
+# `enable-hw-acceleration` and `distro-container-setup`. Everything else
+# (turnip / freedreno releases, the setup-files branch, the wallpapers
+# repo, Termux-AppStore releases, generic configs) is data that lives
+# only on upstream. Keeping the script source overridable lets you point
+# those two files at a fork or topic branch for local iteration without
+# breaking the asset downloads. Override at invocation time with e.g.:
+#   REPO_SCRIPTS_OWNER=op06072 ./setup-termux-desktop
+#   REPO_SCRIPTS_OWNER=op06072 REPO_SCRIPTS_BRANCH=fix-zsh ./setup-termux-desktop
+readonly REPO_SCRIPTS_OWNER="${REPO_SCRIPTS_OWNER:-${REPO_OWNER}}"
+readonly REPO_SCRIPTS_NAME="${REPO_SCRIPTS_NAME:-${REPO_NAME}}"
+readonly REPO_SCRIPTS_BRANCH="${REPO_SCRIPTS_BRANCH:-${REPO_BRANCH_MAIN}}"
+readonly REPO_SCRIPTS_RAW_URL="https://raw.githubusercontent.com/${REPO_SCRIPTS_OWNER}/${REPO_SCRIPTS_NAME}"
 readonly TERMUX_HOME=${HOME:-/data/data/com.termux/files/home}
 readonly TERMUX_PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
 # Retry configuration
@@ -2256,38 +2270,74 @@ function define_value_name() {
 	elif [[ "$enable_hw_acc" == "n" ]]; then
 		hw_acc_confirmation="Disabled"
 	fi
-	# Vulkan Driver
-	if [[ "$exp_termux_vulkan_hw_answer" == "vulkan_wrapper_android" ]]; then
-		vulkan_driver_name="Vulkak Wrapper Android"
-	elif [[ "$exp_termux_vulkan_hw_answer" == "vulkan_wrapper_android_leegaos_fork" ]]; then
+	# Vulkan Driver — keys come from quetion_exp_vulkan_support (lines
+	# ~1747-1753 / 1776-1780). Keep this case in sync with that menu.
+	case "$exp_termux_vulkan_hw_answer" in
+	"vulkan_wrapper_android")
+		vulkan_driver_name="Vulkan Wrapper Android"
+		;;
+	"vulkan_wrapper_android_leegaos_fork")
 		vulkan_driver_name="Vulkan Wrapper Android (leegao's fork)"
-	elif [[ "$exp_termux_vulkan_hw_answer" == "mesa_freedreno" ]]; then
+		;;
+	"vulkan_wrapper_android_pipetto_crypto")
+		vulkan_driver_name="Vulkan Wrapper Android (pipetto-crypto fork)"
+		;;
+	"mesa_freedreno")
 		vulkan_driver_name="Mesa ICD Freedreno"
-	elif [[ "$exp_termux_vulkan_hw_answer" == "mesa_zink_freedreno" ]]; then
+		;;
+	"mesa_zink_freedreno")
 		vulkan_driver_name="Mesa Zink ICD Freedreno"
-	else
+		;;
+	"freedreno_kgsl")
+		vulkan_driver_name="Freedreno (kgsl)"
+		;;
+	"skip")
+		vulkan_driver_name="Skipped (OpenGL fallback only)"
+		;;
+	*)
 		vulkan_driver_name="Might Not Support"
-	fi
-	# OpenGL Driver
-	if [[ "$termux_hw_answer" == "zink" ]]; then
+		;;
+	esac
+	# OpenGL Driver — termux_hw_answer can either be one of the
+	# zink/virgl/angle keys from quetion_termux_hw_answer (lines
+	# ~1891-1899) OR, when the user picked a Freedreno-family Vulkan
+	# driver, hw_questions (line ~1836) copies exp_termux_vulkan_hw_answer
+	# straight into termux_hw_answer, so we have to handle those keys too.
+	case "$termux_hw_answer" in
+	"zink")
 		opengl_driver_name="Zink"
-	elif [[ "$termux_hw_answer" == "virgl" ]]; then
+		;;
+	"virgl")
 		opengl_driver_name="Virgl"
-	elif [[ "$termux_hw_answer" == "virgl_angle" ]]; then
+		;;
+	"virgl_angle")
 		opengl_driver_name="Virgl Angle"
-	elif [[ "$termux_hw_answer" == "virgl_vulkan" ]]; then
+		;;
+	"virgl_vulkan")
 		opengl_driver_name="VIRGL ANGLE (Vulkan)"
-	elif [[ "$termux_hw_answer" == "zink_virgl" ]]; then
+		;;
+	"zink_virgl")
 		opengl_driver_name="OpenGL ES (ZINK VIRGL)"
-	elif [[ "$termux_hw_answer" == "zink_with_mesa" ]]; then
-		opengl_driver_name="The vulkan-wrapper-android Driver With Mesa"
-	elif [[ "$termux_hw_answer" == "zink_with_mesa_zink" ]]; then
-		opengl_driver_name="The vulkan-wrapper-android Driver With Mesa-Zink"
-	elif [[ "$termux_hw_answer" == "freedreno" ]]; then
-		opengl_driver_name="Freedreno"
-	else
+		;;
+	"zink_with_mesa")
+		opengl_driver_name="Mesa Zink Direct (with mesa)"
+		;;
+	"zink_with_mesa_zink")
+		opengl_driver_name="Mesa Zink Direct (with mesa-zink)"
+		;;
+	"mesa_freedreno")
+		opengl_driver_name="Mesa Freedreno"
+		;;
+	"mesa_zink_freedreno")
+		opengl_driver_name="Mesa Freedreno (Zink)"
+		;;
+	"freedreno_kgsl")
+		opengl_driver_name="Freedreno (kgsl)"
+		;;
+	*)
 		opengl_driver_name="Might Not Support"
-	fi
+		;;
+	esac
 	# Linux Distro Container
 	if [[ "$distro_add_answer" == "y" ]]; then
 		distro_container_confirmation="Enabled"
@@ -2326,32 +2376,26 @@ function define_value_name() {
 	elif [[ "$enable_hw_acc" == "n" ]]; then
 		distro_hw_acc_confirmation="Disabled"
 	fi
-	# Distro Vulkan Driver
-	if [[ "$pd_hw_answer" == "zink" ]]; then
+	# Distro Vulkan / OpenGL — pd_hw_answer is set by distro_hw_questions
+	# (lines ~1675-1705) and is always one of zink / virgl / turnip.
+	case "$pd_hw_answer" in
+	"zink")
 		distro_vulkan_driver="Not Supported"
-	elif [[ "$pd_hw_answer" == "virgl" ]]; then
-		distro_vulkan_driver="Not Supported"
-	elif [[ "$pd_hw_answer" == "turnip" ]]; then
-		distro_vulkan_driver="Turnip"
-	elif [[ "$pd_hw_answer" == "freedreno" ]]; then
-		distro_vulkan_driver="Freedreno"
-	else
-		distro_vulkan_driver="Unable to select"
-	fi
-	# Distro OpenGL Driver
-	if [[ "$pd_hw_answer" == "zink" ]]; then
 		distro_opengl_driver="Zink"
-	elif [[ "$pd_hw_answer" == "virgl" ]]; then
+		;;
+	"virgl")
+		distro_vulkan_driver="Not Supported"
 		distro_opengl_driver="Virgl"
-	elif [[ "$pd_hw_answer" == "virgl" ]]; then
-		distro_opengl_driver="Virgl"
-	elif [[ "$pd_hw_answer" == "turnip" ]]; then
+		;;
+	"turnip")
+		distro_vulkan_driver="Turnip"
 		distro_opengl_driver="Turnip"
-	elif [[ "$pd_hw_answer" == "freedreno" ]]; then
-		distro_opengl_driver="Freedreno"
-	else
+		;;
+	*)
+		distro_vulkan_driver="Unable to select"
 		distro_opengl_driver="Unable to select"
-	fi
+		;;
+	esac
 	# Distro Terminal Utilities
 	if [[ "$terminal_utility_setup_answer" == "y" ]]; then
 		distro_terminal_utility_setup_confirmation="Yes"
@@ -3306,9 +3350,11 @@ function setup_necessary_permissions() {
 #########################################################################
 
 # setup hardware acceleration, check if the enable-hw-acceleration already exist, if then first check if it different from github , then ask user if they want to replace it with the latest or not, if not then continue with the local enable-hw-acceleration file
+# Uses REPO_SCRIPTS_* (not REPO_*) so the source can be pointed at a fork
+# or a topic branch for local testing without affecting asset downloads.
 function get_hw_acceleration_source() {
 	local script_path="${current_path}/enable-hw-acceleration"
-	local remote_url="$REPO_RAW_URL/refs/heads/$REPO_BRANCH_MAIN/enable-hw-acceleration"
+	local remote_url="$REPO_SCRIPTS_RAW_URL/refs/heads/$REPO_SCRIPTS_BRANCH/enable-hw-acceleration"
 
 	if [[ -f "$script_path" ]]; then
 		local current_script_hash
@@ -3382,9 +3428,10 @@ function hw_config() {
 #########################################################################
 
 # same as the hardware acceleration setup but for distro-container-setup file
+# Uses REPO_SCRIPTS_* (see comment on get_hw_acceleration_source).
 function get_distro_container_source() {
 	local script_path="${current_path}/distro-container-setup"
-	local remote_url="$REPO_RAW_URL/refs/heads/$REPO_BRANCH_MAIN/distro-container-setup"
+	local remote_url="$REPO_SCRIPTS_RAW_URL/refs/heads/$REPO_SCRIPTS_BRANCH/distro-container-setup"
 
 	if [[ -f "$script_path" ]]; then
 		local current_script_hash
