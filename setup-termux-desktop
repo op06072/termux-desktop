@@ -1896,47 +1896,46 @@ function distro_type_select() {
 	esac
 }
 
-# List proot-distro distros. Output is lines of "alias|Pretty Name".
-# Each upstream row looks like:  * Debian (trixie) < debian >
-function get_proot_distro_aliases() {
+# List chroot-distro distros
+function get_proot_distro_entries() {
 	if ! command -v proot-distro >/dev/null 2>&1; then
 		package_install_and_check "proot-distro" >/dev/null 2>&1 || return 1
 	fi
-	# proot-distro ls writes its banner/footer mixed with the table to
-	# stderr; merge streams and only accept rows starting with "*".
-	proot-distro ls 2>&1 | sed -n 's/^[[:space:]]*\*[[:space:]]*\(.*\)< *\([^ >]*\) *>.*/\2|\1/p' \
-		| awk -F'|' '{
-			alias = $1; name = $2;
-			gsub(/[[:space:]]+$/, "", name);
-			gsub(/[[:space:]]+$/, "", alias);
-			if (alias != "") print alias "|" name;
-		}'
+	proot-distro ls 2>&1 \
+		| sed -n '/\*/s/.*\*[[:space:]]*\(.*\)<[[:space:]]*\([^> ]*\)[[:space:]]*>.*/\2|\1/p' \
+		| awk -F'|' '
+			{
+				alias = $1
+				name  = $2
+				gsub(/[[:space:]]+$/, "", name)
+				if (alias != "" && alias != "alias") {
+					printf "%s|%s\n", alias, name
+				}
+			}'
 }
 
-# List chroot-distro distros. chroot-distro is a root-only binary at
-# /system/bin/chroot-distro, so we either call it through the Termux
-# wrapper (if it has been created already) or via `su -c`. Output rows
-# look like " * debian (trixie) [not installed]" with ANSI colors that
-# we strip before parsing.
-function get_chroot_distro_aliases() {
-	local raw=""
+# List chroot-distro distros.
+function _chroot_distro_raw() {
 	if command -v chroot-distro >/dev/null 2>&1; then
-		raw="$(chroot-distro list 2>&1)" || return 1
+		chroot-distro list 2>&1
 	elif command -v su >/dev/null 2>&1 && su -c true >/dev/null 2>&1; then
-		raw="$(su -c '/system/bin/chroot-distro list' 2>&1)" || return 1
+		su -c '/system/bin/chroot-distro list' 2>&1
 	else
 		return 1
 	fi
+}
 
+function get_chroot_distro_entries() {
+	local raw
+	raw="$(_chroot_distro_raw)" || return 1
 	printf '%s\n' "$raw" | awk '
 		{
-			# Strip ANSI color escapes so the regex below is reliable.
 			gsub(/\033\[[0-9;]*[a-zA-Z]/, "")
 			if ($0 ~ /^[[:space:]]*\*/) {
 				sub(/^[[:space:]]*\*[[:space:]]*/, "")
 				if (match($0, /^[A-Za-z0-9_-]+/)) {
 					alias = substr($0, 1, RLENGTH)
-					rest = substr($0, RLENGTH + 1)
+					rest  = substr($0, RLENGTH + 1)
 					if (match(rest, /^[[:space:]]*\([^)]+\)/)) {
 						ver = substr(rest, RSTART, RLENGTH)
 						gsub(/^[[:space:]]+/, "", ver)
@@ -1949,13 +1948,11 @@ function get_chroot_distro_aliases() {
 		}'
 }
 
-# Dispatch helper: returns "alias|Pretty Name" rows for whatever distro
-# backend the user picked in distro_type_select.
-function get_supported_distros() {
+function get_supported_distro_entries() {
 	if [[ "$selected_distro_type" == "chroot" ]]; then
-		get_chroot_distro_aliases
+		get_chroot_distro_entries
 	else
-		get_proot_distro_aliases
+		get_proot_distro_entries
 	fi
 }
 
@@ -1963,30 +1960,32 @@ function choose_distro() {
 	print_msg "${BOLD}Select Linux Distro You Want To Add"
 	echo " "
 
-	local entries=()
-	mapfile -t entries < <(get_supported_distros)
+	local entries=() aliases=() names=() entry
+	mapfile -t entries < <(get_supported_distro_entries)
+	for entry in "${entries[@]}"; do
+		aliases+=("${entry%%|*}")
+		names+=("${entry#*|}")
+	done
 
-	if ((${#entries[@]} == 0)); then
+	if ((${#aliases[@]} == 0)); then
 		local backend="${selected_distro_type:-proot}-distro"
 		print_failed " Could not list distros from ${backend}. Falling back to debian."
 		selected_distro="debian"
 		return 0
 	fi
 
-	local i alias name
-	for i in "${!entries[@]}"; do
-		alias="${entries[$i]%%|*}"
-		name="${entries[$i]#*|}"
-		echo "${Y}$((i + 1)). ${name} ${NC}(${C}${alias}${NC})"
+	local i
+	for i in "${!names[@]}"; do
+		echo "${Y}$((i + 1)). ${names[$i]}${NC}"
 		echo " "
 	done
 
-	select_an_option "${#entries[@]}" 1 distro_answer
+	select_an_option "${#aliases[@]}" 1 distro_answer
 	# shellcheck disable=SC2154
-	if [[ "$distro_answer" =~ ^[0-9]+$ ]] && ((distro_answer >= 1 && distro_answer <= ${#entries[@]})); then
-		selected_distro="${entries[$((distro_answer - 1))]%%|*}"
+	if [[ "$distro_answer" =~ ^[0-9]+$ ]] && ((distro_answer >= 1 && distro_answer <= ${#aliases[@]})); then
+		selected_distro="${aliases[$((distro_answer - 1))]}"
 	else
-		selected_distro="${entries[0]%%|*}"
+		selected_distro="${aliases[0]}"
 	fi
 }
 
